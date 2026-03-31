@@ -16,34 +16,77 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const router = useRouter();
 
+  // 插入或更新用户到数据库
+  async function upsertUser(userId: string, email: string) {
+    const { error } = await supabase.from("users").upsert({
+      id: userId,
+      email: email,
+      name: email.split("@")[0], // 默认名称为邮箱的前缀
+    });
+
+    if (error) {
+      console.error("Failed to upsert user:", error.message);
+      Alert.alert("Error", "Failed to save user to the database.");
+    } else {
+      console.log("User successfully added or updated in the database.");
+    }
+  }
+
+  // 登录
   async function signInWithEmail() {
     setLoading(true);
-    const { error } = await supabase.auth.signInWithPassword({
+    const { data: session, error } = await supabase.auth.signInWithPassword({
       email: email,
       password: password,
     });
+
     if (error) {
       Alert.alert(error.message);
-    } else {
-      // 登录成功后跳转到 friends 页面
+    } else if (session?.user) {
+      // 登录成功后将用户信息插入或更新到数据库
+      if (session.user.email) {
+        await upsertUser(session.user.id, session.user.email);
+      } else {
+        console.error("User email is undefined.");
+        Alert.alert("Error", "User email is undefined.");
+      }
+      // 跳转到 friends 页面
       router.replace("/(tabs)/friends");
     }
     setLoading(false);
   }
+
+  // 注册
   async function signUpWithEmail() {
     setLoading(true);
     const {
-      data: { session },
+      data: { user, session },
       error,
     } = await supabase.auth.signUp({
       email: email,
       password: password,
     });
-    if (error) Alert.alert(error.message);
-    if (!session)
-      Alert.alert("Please check your inbox for email verification!");
+
+    if (error) {
+      Alert.alert(error.message);
+    } else if (user) {
+      // 注册成功后将用户信息插入到数据库
+      if (user.email) {
+        await upsertUser(user.id, user.email);
+        console.log(
+          "User successfully registered and added to the database.",
+          user.id,
+          user.email
+        );
+      } else {
+        console.error("User email is undefined.");
+        Alert.alert("Error", "User email is undefined.");
+      }
+      Alert.alert("Success", "Please check your inbox for email verification!");
+    }
     setLoading(false);
   }
+
   return (
     <View style={styles.container}>
       <View style={[styles.verticallySpaced, styles.mt20]}>
@@ -88,6 +131,7 @@ export default function Login() {
     </View>
   );
 }
+
 const styles = StyleSheet.create({
   container: {
     marginTop: 40,
