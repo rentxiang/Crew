@@ -1,4 +1,6 @@
-# Welcome to your Expo app 👋
+# Welcome to Ride9 👋
+
+Important: Node version used: v20+
 
 This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
 
@@ -15,6 +17,14 @@ This is an [Expo](https://expo.dev) project created with [`create-expo-app`](htt
    ```bash
    npx expo start
    ```
+
+3. Or for the simulator start
+
+```bash
+npx expo prebuild
+npx expo run:android
+npx expo run:ios
+```
 
 In the output, you'll find options to open the app in a
 

@@ -1,201 +1,190 @@
 import Mapbox, { Camera, LocationPuck, MapView } from "@rnmapbox/maps";
 import { useEffect, useState, useRef } from "react";
-
-import FriendMarker from "../../components/FriendMaker";
-import { startLocationTracking } from "../../services/location";
-import { updateLocation, getFriendLocations } from "../../services/location";
-import { subscribeLocations } from "../../services/realtime";
 import { StyleSheet, TouchableOpacity, View, Text } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+
+import FriendMarker from "../../components/FriendMaker";
+import {
+  startLocationTracking,
+  updateLocation,
+  getFriendLocations,
+} from "../../services/location";
+import { subscribeLocations } from "../../services/realtime";
+import { getFriends } from "../../services/friends";
 import { supabase } from "@/services/supabase";
-import { JwtPayload } from "@supabase/supabase-js";
 
 Mapbox.setAccessToken(process.env.EXPO_PUBLIC_MAPBOX_KEY || "");
 
 export default function Map() {
-  const [friends, setFriends] = useState<
-    { user_id: number; [key: string]: any }[]
-  >([]);
+  const [friends, setFriends] = useState<any[]>([]); // 👈 用户信息
+  const [locations, setLocations] = useState<any[]>([]); // 👈 位置
+  const [authUser, setAuthUser] = useState<any>(null);
   const [theme, setTheme] = useState<"light" | "dark">("dark");
-  const [authUser, setAuthUser] = useState<any>(null); // 认证用户
-  const [user, setUser] = useState<any>(null); // 数据库用户
-  const [userLocation, setUserLocation] = useState<{
-    lat: number;
-    lng: number;
-  } | null>();
-  const [claims, setClaims] = useState<JwtPayload | null>(null);
+
   const coordsRef = useRef<{ latitude: number; longitude: number } | null>(
     null
   );
   const cameraRef = useRef<Camera>(null);
 
-  // Fetch claims and listen for auth state changes
+  // ========================
+  // Auth
+  // ========================
   useEffect(() => {
-    supabase.auth.getClaims().then(({ data }) => {
-      if (data) {
-        setClaims(data.claims);
+    const init = async () => {
+      const { data } = await supabase.auth.getUser();
+      if (data?.user) {
+        setAuthUser(data.user);
+        loadFriends(data.user.id);
+      }
+    };
+
+    init();
+
+    const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === "SIGNED_IN" && session?.user) {
+        setAuthUser(session.user);
+        loadFriends(session.user.id);
       }
     });
 
-    const { data: subscription } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
-        if (event === "SIGNED_IN" && session?.user) {
-          setAuthUser(session.user);
-          fetchDatabaseUser(session.user.id); // Fetch database user
-        } else if (event === "SIGNED_OUT") {
-          setAuthUser(null);
-          setUser(null);
-        }
-      }
-    );
-
     return () => {
-      subscription?.subscription.unsubscribe();
+      sub?.subscription.unsubscribe();
     };
   }, []);
 
-  // Fetch database user
-  const fetchDatabaseUser = async (userId: string) => {
-    const { data, error } = await supabase
-      .from("users")
-      .select("*")
-      .eq("id", userId)
-      .single();
+  // ========================
+  // Load friends（静态）
+  // ========================
+  useEffect(() => {
+    if (!authUser) return;
 
-    if (error) {
-      console.error("Failed to fetch user from database:", error.message);
-      return;
-    }
+    const loadInitialLocations = async () => {
+      const data = await getFriendLocations(authUser.id);
 
-    setUser(data);
+      setLocations(data || []);
+    };
+
+    loadInitialLocations();
+  }, [authUser]);
+
+  const loadFriends = async (userId: string) => {
+    const data = await getFriends(userId);
+
+    setFriends(
+      data.map((item: any) => ({
+        user_id: item.friend_id,
+        name: item.friend.name,
+        email: item.friend.email,
+        avatarUrl: `https://api.dicebear.com/7.x/avataaars/png?seed=${item.friend.email}`,
+      }))
+    );
   };
 
-  // Start location tracking and update locations table
+  // 3s refresh friend locations
   useEffect(() => {
-    // if (!authUser || !user) {
-    //   console.log("Anonymous user: Skipping location updates.");
-    //   return;
-    // }
+    if (!authUser) return;
 
-    const loadInitialFriends = async () => {
-      const initialFriends = await getFriendLocations(user.id);
-      setFriends(initialFriends || []);
-    };
-
-    loadInitialFriends();
-
-    let locationSubscription: any | null = null;
-
-    // Start location tracking
-    startLocationTracking((coords: any) => {
-      console.log("User location:", coords.latitude, coords.longitude);
-      coordsRef.current = coords; // 保存最新的 coords
-      updateLocation(authUser.id, coords.latitude, coords.longitude).catch(
-        (error) => {
-          console.error("Failed to update location:", error);
-        }
-      );
-    }).then((subscription) => {
-      locationSubscription = subscription; // 保存订阅对象
-    });
-
-    // 定期刷新 userLocation
-    const interval = setInterval(() => {
-      if (coordsRef.current) {
-        const { latitude, longitude } = coordsRef.current;
-        console.log("Setting user location:", latitude, longitude);
-        setUserLocation({ lat: latitude, lng: longitude });
-      }
-    }, 5000); // 每 5 秒刷新一次
-
-    const sub = subscribeLocations(setFriends);
+    const interval = setInterval(async () => {
+      const data = await getFriendLocations(authUser.id);
+      setLocations(data || []);
+    }, 3000); // 每 3 秒调用一次
 
     return () => {
-      if (locationSubscription) {
-        locationSubscription.remove(); // 停止位置监听
-      }
-      if (sub && typeof sub.unsubscribe === "function") {
-        sub.unsubscribe(); // 取消订阅
-      }
-      clearInterval(interval); // 清除定时器
+      clearInterval(interval); // 清除定时器，避免内存泄漏
     };
-  }, [authUser, user]);
+  }, [authUser]);
 
-  const mockFriends = [
-    {
-      id: 1,
-      name: "Ben",
-      avatarUrl:
-        "https://gravatar.com/avatar/d9ae174a12650c280f2afc3ba9bf0b82?s=400&d=robohash&r=x",
-      lat: 37.7749,
-      lng: -122.4194,
-    },
-    {
-      id: 2,
-      name: "Bobby",
-      avatarUrl:
-        "https://gravatar.com/avatar/d9ae174a12650c280f2afc3ba9bf0b82?s=400&d=robohash&r=x",
-      lat: 34.0522,
-      lng: -118.2437,
-    },
-  ];
+  // ========================
+  // Location tracking（自己）
+  // ========================
+  useEffect(() => {
+    if (!authUser) return;
 
+    let locationSub: any = null;
+
+    startLocationTracking((coords) => {
+      coordsRef.current = coords;
+
+      updateLocation(authUser.id, coords.latitude, coords.longitude);
+    }).then((sub) => {
+      locationSub = sub;
+    });
+
+    return () => {
+      locationSub?.remove();
+    };
+  }, [authUser]);
+
+  useEffect(() => {
+    console.log("Friends:", friends);
+  }, [friends]);
+
+  // ========================
+  // Realtime（好友位置）
+  // ========================
+  useEffect(() => {
+    if (!authUser || friends.length === 0) return;
+
+    const friendIds = friends.map((f) => f.user_id);
+
+    const sub = subscribeLocations(friendIds, setLocations);
+
+    return () => {
+      sub?.unsubscribe();
+    };
+  }, [friends]);
+
+  // ========================
+  // merge（核心！！！）
+  // ========================
+  const mergedFriends = friends.map((f) => {
+    const loc = locations.find((l) => l.user_id === f.user_id);
+
+    return {
+      ...f,
+      latitude: loc?.lat,
+      longitude: loc?.lng,
+    };
+  });
+  // ========================
+  // UI
+  // ========================
   return (
     <View style={{ flex: 1 }}>
       <MapView
         style={{ flex: 1 }}
         styleURL={theme === "dark" ? "mapbox://styles/mapbox/dark-v11" : ""}
       >
-        <Camera
-          // centerCoordinate={cameraCenter || undefined}
-          ref={cameraRef}
-          zoomLevel={16}
-          animationMode="flyTo"
-          animationDuration={1000}
-          followUserLocation={false}
-        />
+        <Camera ref={cameraRef} zoomLevel={16} followUserLocation={false} />
+
         <LocationPuck
           puckBearing="heading"
           puckBearingEnabled
           pulsing={{ isEnabled: true }}
         />
 
-        {mockFriends.map((f) => (
-          <FriendMarker
-            key={f.id}
-            friend={{
-              user_id: f.id,
-              name: f.name || "Someone",
-              avatarUrl:
-                f.avatarUrl || "https://example.com/default-avatar.png",
-              latitude: f.lat,
-              longitude: f.lng,
-            }}
-          />
-        ))}
+        {/* 👇 渲染真实好友 */}
+        {mergedFriends.map((f) =>
+          f.latitude && f.longitude ? (
+            <FriendMarker key={f.user_id} friend={f} />
+          ) : null
+        )}
       </MapView>
-      {!authUser && (
-        <View style={{ position: "absolute", top: 10, left: 10 }}>
-          <Text>You are viewing as a guest.</Text>
-        </View>
-      )}
-      {claims && <Text>logged user: {claims.sub}</Text>}
+
+      {/* Theme toggle */}
       <TouchableOpacity
         style={styles.iconButton}
         onPress={() => setTheme((prev) => (prev === "dark" ? "light" : "dark"))}
       >
-        <Ionicons
-          name={theme === "dark" ? "sunny" : "moon"}
-          size={24}
-          color={theme === "dark" ? "black" : "black"}
-        />
+        <Ionicons name="sunny" size={24} color="black" />
       </TouchableOpacity>
+
+      {/* Center button */}
       <TouchableOpacity
         style={styles.centerButton}
         onPress={() => {
           if (coordsRef.current && cameraRef.current) {
             const { latitude, longitude } = coordsRef.current;
-
             cameraRef.current.flyTo([longitude, latitude], 1000);
           }
         }}
@@ -211,28 +200,16 @@ const styles = StyleSheet.create({
     position: "absolute",
     top: 80,
     right: 15,
-    zIndex: 1,
     backgroundColor: "white",
     padding: 6,
     borderRadius: 18,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 2,
-    elevation: 5,
   },
   centerButton: {
     position: "absolute",
     bottom: 80,
     right: 15,
-    zIndex: 1,
     backgroundColor: "white",
     padding: 6,
     borderRadius: 18,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 2,
-    elevation: 5,
   },
 });
