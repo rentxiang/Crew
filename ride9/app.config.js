@@ -31,7 +31,8 @@ export default {
       [
         "@rnmapbox/maps",
         {
-          RNMAPBOX_MAPS_DOWNLOAD_TOKEN: process.env.EXPO_RNMAPBOX_MAPS_DOWNLOAD_TOKEN,
+          RNMAPBOX_MAPS_DOWNLOAD_TOKEN:
+            process.env.EXPO_RNMAPBOX_MAPS_DOWNLOAD_TOKEN,
         },
       ],
       [
@@ -58,5 +59,12 @@ export default {
       typedRoutes: true,
       reactCompiler: true,
     },
+    extra: {
+      eas: {
+        projectId: "a4738417-b6e7-402d-9727-cb434f831145",
+      },
+    },
+    owner: "ride9",
+    slug: "ride-9",
   },
 };

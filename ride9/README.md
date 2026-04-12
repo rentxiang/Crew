@@ -1,5 +1,20 @@
 # Welcome to Ride9 👋
 
+![Ride 9](image.png)
+
+## Features:
+
+- **Cross-platform compatibility**: Built with React Native and Expo, the app runs seamlessly on both iOS and Android devices.
+- **Real-time location tracking**: Utilizes `expo-location` and `@rnmapbox/maps` for precise and real-time location updates.
+- **Friend system**: Includes a robust friend management system with features to add, remove, and track friends' locations.
+- **Supabase integration**: Leverages Supabase for authentication, database management, and real-time updates.
+- **Modern JavaScript**: Developed using the latest ES6+ features and TypeScript for type safety and better developer experience.
+- **Custom map integration**: Powered by Mapbox for interactive and customizable maps with real-time updates.
+- **Responsive design**: Optimized for various screen sizes and orientations with a clean and intuitive UI.
+- **Dark mode support**: Includes light and dark themes for better user experience in different environments.
+- **Fast development**: Built with Expo for rapid prototyping, testing, and deployment.
+- **Active community support**: Supported by Expo's extensive ecosystem, documentation, and community resources.
+
 Important: Node version used: v20+
 
 This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
@@ -26,35 +41,4 @@ npx expo run:android
 npx expo run:ios
 ```
 
-In the output, you'll find options to open the app in a
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
-
-```bash
-npm run reset-project
-```
-
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
-
-## Learn more
-
-To learn more about developing your project with Expo, look at the following resources:
-
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
-
-## Join the community
-
-Join our community of developers creating universal apps.
-
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
