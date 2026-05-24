@@ -1,8 +1,30 @@
-import React from "react";
-import { View, Text, Image, StyleSheet } from "react-native";
+import React, { useEffect, useRef } from "react";
+import { Animated, View, Text, Image, StyleSheet } from "react-native";
 import { MarkerView } from "@rnmapbox/maps";
 
-export default function RiderMarker({ rider }: { rider: any }) {
+export default function RiderMarker({ rider, showLabel = true }: { rider: any; showLabel?: boolean }) {
+  const glowScale = useRef(new Animated.Value(1)).current;
+  const glowOpacity = useRef(new Animated.Value(0.18)).current;
+
+  useEffect(() => {
+    const pulse = Animated.loop(
+      Animated.sequence([
+        Animated.parallel([
+          Animated.timing(glowScale, { toValue: 1.5, duration: 1000, useNativeDriver: true }),
+          Animated.timing(glowOpacity, { toValue: 0.04, duration: 1000, useNativeDriver: true }),
+        ]),
+        Animated.parallel([
+          Animated.timing(glowScale, { toValue: 1, duration: 1000, useNativeDriver: true }),
+          Animated.timing(glowOpacity, { toValue: 0.18, duration: 1000, useNativeDriver: true }),
+        ]),
+      ])
+    );
+    pulse.start();
+    return () => pulse.stop();
+  }, []);
+
+  const glowColor = rider.isSelf ? "rgba(0, 122, 255," : "rgba(255, 69, 0,";
+
   return (
     <MarkerView
       id={`rider-${rider.user_id}`}
@@ -10,12 +32,21 @@ export default function RiderMarker({ rider }: { rider: any }) {
     >
       <View style={styles.container}>
         <View style={styles.avatarWrapper}>
-          <View style={[styles.glow, rider.isSelf && styles.glowSelf]} />
+          <Animated.View
+            style={[
+              styles.glow,
+              {
+                backgroundColor: glowColor + " 1)",
+                opacity: glowOpacity,
+                transform: [{ scale: glowScale }],
+              },
+            ]}
+          />
           <Image source={{ uri: rider.avatarUrl }} style={[styles.avatar, rider.isSelf && styles.avatarSelf]} />
         </View>
         <View style={styles.label}>
           <Text style={styles.name}>{rider.name}</Text>
-          {rider.bike ? (
+          {showLabel && rider.bike ? (
             <Text style={styles.bike}>{rider.bike}</Text>
           ) : null}
         </View>
@@ -37,7 +68,6 @@ const styles = StyleSheet.create({
     width: 56,
     height: 56,
     borderRadius: 28,
-    backgroundColor: "rgba(255, 69, 0, 0.18)",
     top: -8,
     left: -8,
   },
@@ -47,9 +77,6 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     borderWidth: 2,
     borderColor: "#ff4500",
-  },
-  glowSelf: {
-    backgroundColor: "rgba(0, 122, 255, 0.2)",
   },
   avatarSelf: {
     borderColor: "#007aff",

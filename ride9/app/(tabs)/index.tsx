@@ -1,15 +1,8 @@
 import Mapbox, { Camera, LocationPuck, MapView } from "@rnmapbox/maps";
 import { useEffect, useState, useRef } from "react";
-import { StyleSheet, TouchableOpacity, View, Text } from "react-native";
+import { Animated, StyleSheet, TouchableOpacity, View, Text } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as Location from "expo-location";
-import Animated, {
-  useSharedValue,
-  useAnimatedStyle,
-  withTiming,
-  withSequence,
-  withDelay,
-} from "react-native-reanimated";
 import { supabase } from "@/services/supabase";
 import RiderMarker from "../../components/RiderMarker";
 import { getFriendLocations } from "../../services/location";
@@ -31,6 +24,7 @@ export default function MapScreen() {
   const [authUser, setAuthUser] = useState<any>(null);
   const [selfProfile, setSelfProfile] = useState<any>(null);
   const [selfCoords, setSelfCoords] = useState<{ latitude: number; longitude: number } | null>(null);
+  const [zoomLevel, setZoomLevel] = useState(15);
   const [centered, setCentered] = useState(false);
   const [toastConfig, setToastConfig] = useState<ToastConfig>({
     message: "",
@@ -43,44 +37,48 @@ export default function MapScreen() {
   const cameraRef = useRef<Camera>(null);
 
   // Toast animation (slides down from above)
-  const toastOpacity = useSharedValue(0);
-  const toastY = useSharedValue(-40);
-  const toastScale = useSharedValue(0.92);
+  const toastOpacity = useRef(new Animated.Value(0)).current;
+  const toastY = useRef(new Animated.Value(-40)).current;
+  const toastScale = useRef(new Animated.Value(0.92)).current;
 
   // Share button pulse
-  const buttonScale = useSharedValue(1);
+  const buttonScale = useRef(new Animated.Value(1)).current;
 
   const showToast = (config: ToastConfig) => {
     setToastConfig(config);
-    toastOpacity.value = withSequence(
-      withTiming(1, { duration: 260 }),
-      withDelay(2000, withTiming(0, { duration: 380 }))
-    );
-    toastY.value = withSequence(
-      withTiming(0, { duration: 260 }),
-      withDelay(2000, withTiming(-40, { duration: 380 }))
-    );
-    toastScale.value = withSequence(
-      withTiming(1, { duration: 260 }),
-      withDelay(2000, withTiming(0.94, { duration: 380 }))
-    );
+    toastOpacity.setValue(0);
+    toastY.setValue(-40);
+    toastScale.setValue(0.92);
+    Animated.sequence([
+      Animated.parallel([
+        Animated.timing(toastOpacity, { toValue: 1, duration: 260, useNativeDriver: true }),
+        Animated.timing(toastY, { toValue: 0, duration: 260, useNativeDriver: true }),
+        Animated.timing(toastScale, { toValue: 1, duration: 260, useNativeDriver: true }),
+      ]),
+      Animated.delay(2000),
+      Animated.parallel([
+        Animated.timing(toastOpacity, { toValue: 0, duration: 380, useNativeDriver: true }),
+        Animated.timing(toastY, { toValue: -40, duration: 380, useNativeDriver: true }),
+        Animated.timing(toastScale, { toValue: 0.94, duration: 380, useNativeDriver: true }),
+      ]),
+    ]).start();
   };
 
   const pulseButton = () => {
-    buttonScale.value = withSequence(
-      withTiming(1.3, { duration: 140 }),
-      withTiming(1, { duration: 200 })
-    );
+    Animated.sequence([
+      Animated.timing(buttonScale, { toValue: 1.3, duration: 140, useNativeDriver: true }),
+      Animated.timing(buttonScale, { toValue: 1, duration: 200, useNativeDriver: true }),
+    ]).start();
   };
 
-  const toastStyle = useAnimatedStyle(() => ({
-    opacity: toastOpacity.value,
-    transform: [{ translateY: toastY.value }, { scale: toastScale.value }],
-  }));
+  const toastStyle = {
+    opacity: toastOpacity,
+    transform: [{ translateY: toastY }, { scale: toastScale }],
+  };
 
-  const buttonAnimStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: buttonScale.value }],
-  }));
+  const buttonAnimStyle = {
+    transform: [{ scale: buttonScale }],
+  };
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
@@ -124,6 +122,25 @@ export default function MapScreen() {
       }))
     );
   };
+
+  // Jump to user's location on first map load
+  useEffect(() => {
+    const timer = setTimeout(async () => {
+      try {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== "granted") return;
+        const loc = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Balanced,
+        });
+        cameraRef.current?.setCamera({
+          centerCoordinate: [loc.coords.longitude, loc.coords.latitude],
+          zoomLevel: 15,
+          animationDuration: 0,
+        });
+      } catch {}
+    }, 600);
+    return () => clearTimeout(timer);
+  }, []);
 
   // Auto-center camera when sharing starts and first fix arrives
   useEffect(() => {
@@ -278,7 +295,11 @@ export default function MapScreen() {
 
   return (
     <View style={styles.container}>
-      <MapView style={styles.map} styleURL="mapbox://styles/mapbox/dark-v11">
+      <MapView
+        style={styles.map}
+        styleURL="mapbox://styles/mapbox/dark-v11"
+        onCameraChanged={(e) => setZoomLevel(e.properties.zoom)}
+      >
         <Camera
           ref={cameraRef}
           zoomLevel={15}
@@ -293,7 +314,7 @@ export default function MapScreen() {
           />
         )}
         {allRiders.map((r) => (
-          <RiderMarker key={r.user_id} rider={r} />
+          <RiderMarker key={r.user_id} rider={r} showLabel={zoomLevel >= 13} />
         ))}
         {isSharing && selfCoords && selfProfile && (
           <RiderMarker
@@ -306,6 +327,7 @@ export default function MapScreen() {
               longitude: selfCoords.longitude,
               isSelf: true,
             }}
+            showLabel={zoomLevel >= 13}
           />
         )}
       </MapView>
