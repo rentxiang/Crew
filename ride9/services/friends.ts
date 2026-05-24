@@ -10,6 +10,7 @@ export async function getFriends(userId: string) {
         id,
         name,
         email,
+        username,
         bike,
         avatar_seed
       )
@@ -25,20 +26,27 @@ export async function getFriends(userId: string) {
   return data;
 }
 
-export async function addFriend(userId: string, email: string) {
+export async function addFriend(userId: string, tag: string) {
+  const cleanTag = tag.replace(/^@/, "").toLowerCase().trim();
+
+  if (!cleanTag) throw new Error("Please enter a rider tag");
+
   const { data: target } = await supabase
     .from("users")
     .select("id")
-    .eq("email", email)
+    .eq("username", cleanTag)
     .single();
 
-  if (!target) throw new Error("User not found");
-  if (target.id === userId) throw new Error("Cannot add yourself");
+  if (!target) throw new Error("Rider not found. Check the tag and try again.");
+  if (target.id === userId) throw new Error("That's you!");
 
-  await supabase.from("friends").insert([
+  const { error } = await supabase.from("friends").insert([
     { user_id: userId, friend_id: target.id },
     { user_id: target.id, friend_id: userId },
   ]);
+
+  if (error?.code === "23505") throw new Error("Already in your crew");
+  if (error) throw new Error(error.message);
 }
 
 export async function removeFriend(userId: string, friendId: string) {

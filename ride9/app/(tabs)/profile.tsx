@@ -24,6 +24,7 @@ const AVATAR_SEEDS = [
 export default function ProfileScreen() {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [name, setName] = useState("");
+  const [username, setUsername] = useState("");
   const [bike, setBike] = useState("");
   const [selectedSeed, setSelectedSeed] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -39,6 +40,7 @@ export default function ProfileScreen() {
       if (p) {
         setProfile(p);
         setName(p.name);
+        setUsername(p.username ?? "");
         setBike(p.bike ?? "");
         setSelectedSeed(p.avatar_seed);
       }
@@ -53,14 +55,26 @@ export default function ProfileScreen() {
       Alert.alert("Name required", "Please enter your name.");
       return;
     }
+    const cleanUsername = username.replace(/^@/, "").toLowerCase().trim();
+    if (cleanUsername && !/^[a-z0-9_]{3,20}$/.test(cleanUsername)) {
+      Alert.alert("Invalid tag", "Use 3–20 characters: letters, numbers, underscores only.");
+      return;
+    }
     setSaving(true);
     try {
       await updateProfile(profile.id, {
         name: name.trim(),
+        username: cleanUsername || undefined,
         bike: bike.trim() || undefined,
         avatar_seed: selectedSeed ?? undefined,
       });
-      setProfile({ ...profile, name: name.trim(), bike: bike.trim() || null, avatar_seed: selectedSeed });
+      setProfile({
+        ...profile,
+        name: name.trim(),
+        username: cleanUsername || null,
+        bike: bike.trim() || null,
+        avatar_seed: selectedSeed,
+      });
       Alert.alert("Saved", "Profile updated.");
     } catch (e: any) {
       Alert.alert("Error", e.message);
@@ -128,6 +142,23 @@ export default function ProfileScreen() {
           );
         })}
       </View>
+
+      {/* Rider tag */}
+      <Text style={styles.sectionLabel}>RIDER TAG</Text>
+      <View style={styles.tagWrapper}>
+        <Text style={styles.atSign}>@</Text>
+        <TextInput
+          style={styles.tagInput}
+          value={username}
+          onChangeText={(t) => setUsername(t.replace(/^@/, "").toLowerCase())}
+          placeholder="yourtag"
+          placeholderTextColor="#333"
+          autoCapitalize="none"
+          autoCorrect={false}
+          maxLength={20}
+        />
+      </View>
+      <Text style={styles.inputHint}>Your crew adds you by this tag · 3–20 chars, no spaces</Text>
 
       {/* Name */}
       <Text style={styles.sectionLabel}>NAME</Text>
@@ -255,6 +286,29 @@ const styles = StyleSheet.create({
     height: 18,
     justifyContent: "center",
     alignItems: "center",
+  },
+
+  tagWrapper: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#111",
+    borderWidth: 1,
+    borderColor: "#1e1e1e",
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    marginBottom: 6,
+  },
+  atSign: {
+    color: "#ff4500",
+    fontSize: 16,
+    fontWeight: "700",
+    marginRight: 4,
+  },
+  tagInput: {
+    flex: 1,
+    paddingVertical: 14,
+    fontSize: 15,
+    color: "#fff",
   },
 
   // Fields

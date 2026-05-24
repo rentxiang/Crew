@@ -18,11 +18,39 @@ export default function Login() {
   const [mode, setMode] = useState<"signin" | "signup">("signin");
 
   async function upsertUser(userId: string, email: string) {
-    await supabase.from("users").upsert({
+    // Don't overwrite username if user already exists
+    const { data: existing } = await supabase
+      .from("users")
+      .select("id")
+      .eq("id", userId)
+      .maybeSingle();
+
+    if (existing) {
+      await supabase
+        .from("users")
+        .update({ name: email.split("@")[0], email })
+        .eq("id", userId);
+      return;
+    }
+
+    // New user — derive a default username from email prefix
+    const base = email.split("@")[0].toLowerCase().replace(/[^a-z0-9_]/g, "");
+    const { error } = await supabase.from("users").insert({
       id: userId,
       email,
       name: email.split("@")[0],
+      username: base,
     });
+
+    // Username already taken — append random suffix
+    if (error?.code === "23505") {
+      await supabase.from("users").insert({
+        id: userId,
+        email,
+        name: email.split("@")[0],
+        username: `${base}${Math.floor(100 + Math.random() * 900)}`,
+      });
+    }
   }
 
   async function signInWithEmail() {

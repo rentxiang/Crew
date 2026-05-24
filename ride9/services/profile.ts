@@ -4,6 +4,7 @@ export type UserProfile = {
   id: string;
   name: string;
   email: string;
+  username: string | null;
   bike: string | null;
   avatar_seed: string | null;
 };
@@ -11,7 +12,7 @@ export type UserProfile = {
 export async function getProfile(userId: string): Promise<UserProfile | null> {
   const { data, error } = await supabase
     .from("users")
-    .select("id, name, email, bike, avatar_seed")
+    .select("id, name, email, username, bike, avatar_seed")
     .eq("id", userId)
     .single();
 
@@ -21,13 +22,14 @@ export async function getProfile(userId: string): Promise<UserProfile | null> {
 
 export async function updateProfile(
   userId: string,
-  updates: { name?: string; bike?: string; avatar_seed?: string }
+  updates: { name?: string; username?: string; bike?: string; avatar_seed?: string }
 ): Promise<void> {
   const { error } = await supabase
     .from("users")
     .update(updates)
     .eq("id", userId);
 
+  if (error?.code === "23505") throw new Error("That rider tag is already taken.");
   if (error) throw new Error(error.message);
 }
 

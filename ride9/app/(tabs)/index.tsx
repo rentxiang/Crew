@@ -17,7 +17,7 @@ import { subscribeLocations } from "../../services/realtime";
 import { getFriends } from "../../services/friends";
 import { getRoomMemberLocations, getRoomMembers } from "../../services/rooms";
 import { useLocationSharing } from "../../contexts/LocationSharingContext";
-import { avatarUrl } from "../../services/profile";
+import { avatarUrl, getProfile } from "../../services/profile";
 
 Mapbox.setAccessToken(process.env.EXPO_PUBLIC_MAPBOX_KEY || "");
 
@@ -29,6 +29,8 @@ export default function MapScreen() {
   const [roomMembers, setRoomMembers] = useState<any[]>([]);
   const [roomLocations, setRoomLocations] = useState<any[]>([]);
   const [authUser, setAuthUser] = useState<any>(null);
+  const [selfProfile, setSelfProfile] = useState<any>(null);
+  const [selfCoords, setSelfCoords] = useState<{ latitude: number; longitude: number } | null>(null);
   const [centered, setCentered] = useState(false);
   const [toastConfig, setToastConfig] = useState<ToastConfig>({
     message: "",
@@ -40,9 +42,9 @@ export default function MapScreen() {
     useLocationSharing();
   const cameraRef = useRef<Camera>(null);
 
-  // Toast animation
+  // Toast animation (slides down from above)
   const toastOpacity = useSharedValue(0);
-  const toastY = useSharedValue(32);
+  const toastY = useSharedValue(-40);
   const toastScale = useSharedValue(0.92);
 
   // Share button pulse
@@ -56,7 +58,7 @@ export default function MapScreen() {
     );
     toastY.value = withSequence(
       withTiming(0, { duration: 260 }),
-      withDelay(2000, withTiming(32, { duration: 380 }))
+      withDelay(2000, withTiming(-40, { duration: 380 }))
     );
     toastScale.value = withSequence(
       withTiming(1, { duration: 260 }),
@@ -85,6 +87,7 @@ export default function MapScreen() {
       if (data?.user) {
         setAuthUser(data.user);
         loadFriends(data.user.id);
+        getProfile(data.user.id).then(setSelfProfile);
       }
     });
 
@@ -92,6 +95,7 @@ export default function MapScreen() {
       if (event === "SIGNED_IN" && session?.user) {
         setAuthUser(session.user);
         loadFriends(session.user.id);
+        getProfile(session.user.id).then(setSelfProfile);
       }
       if (event === "SIGNED_OUT") {
         setAuthUser(null);
@@ -139,6 +143,37 @@ export default function MapScreen() {
 
     return () => clearInterval(interval);
   }, [isSharing]);
+
+  // Track own coords for self marker
+  useEffect(() => {
+    if (!isSharing) {
+      setSelfCoords(null);
+      return;
+    }
+    if (coordsRef.current) {
+      setSelfCoords({ latitude: coordsRef.current.latitude, longitude: coordsRef.current.longitude });
+    }
+    const interval = setInterval(() => {
+      if (coordsRef.current) {
+        setSelfCoords({ latitude: coordsRef.current.latitude, longitude: coordsRef.current.longitude });
+      }
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [isSharing]);
+
+  // Reload friends when the friends table changes (e.g. new friend added from Crew tab)
+  useEffect(() => {
+    if (!authUser) return;
+    const channel = supabase
+      .channel("map-friends-changes")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "friends", filter: `user_id=eq.${authUser.id}` },
+        () => loadFriends(authUser.id)
+      )
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [authUser]);
 
   // Friend realtime locations
   useEffect(() => {
@@ -250,14 +285,29 @@ export default function MapScreen() {
           followUserLocation={false}
           animationMode="flyTo"
         />
-        <LocationPuck
-          puckBearing="heading"
-          puckBearingEnabled
-          pulsing={{ isEnabled: true }}
-        />
+        {(!isSharing || !selfCoords) && (
+          <LocationPuck
+            puckBearing="heading"
+            puckBearingEnabled
+            pulsing={{ isEnabled: true }}
+          />
+        )}
         {allRiders.map((r) => (
           <RiderMarker key={r.user_id} rider={r} />
         ))}
+        {isSharing && selfCoords && selfProfile && (
+          <RiderMarker
+            rider={{
+              user_id: `self-${authUser?.id}`,
+              name: selfProfile.name ?? "Me",
+              bike: selfProfile.bike ?? null,
+              avatarUrl: avatarUrl(selfProfile.avatar_seed, selfProfile.email),
+              latitude: selfCoords.latitude,
+              longitude: selfCoords.longitude,
+              isSelf: true,
+            }}
+          />
+        )}
       </MapView>
 
       {/* HUD */}
@@ -314,7 +364,7 @@ const styles = StyleSheet.create({
   },
   hud: {
     position: "absolute",
-    top: 60,
+    top: 75,
     left: 0,
     right: 0,
     alignItems: "center",
@@ -344,7 +394,7 @@ const styles = StyleSheet.create({
   },
   toast: {
     position: "absolute",
-    bottom: 110,
+    top: 110,
     alignSelf: "center",
     flexDirection: "row",
     alignItems: "center",

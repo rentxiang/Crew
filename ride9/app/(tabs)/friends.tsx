@@ -11,14 +11,16 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { getFriends, addFriend, removeFriend } from "../../services/friends";
+import { getProfile } from "../../services/profile";
 
 export default function Friends() {
   const [user, setUser] = useState<any>(null);
+  const [selfUsername, setSelfUsername] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [friends, setFriends] = useState<
-    { friend_id: string; friend: { name: string; email: string } }[]
+    { friend_id: string; friend: { name: string; username: string | null; bike: string | null } }[]
   >([]);
-  const [email, setEmail] = useState("");
+  const [tag, setTag] = useState("");
 
   useEffect(() => {
     const init = async () => {
@@ -26,16 +28,16 @@ export default function Friends() {
       if (error || !data?.user) return;
       setUser(data.user);
       await fetchFriends(data.user.id);
+      const profile = await getProfile(data.user.id);
+      setSelfUsername(profile?.username ?? null);
       setLoading(false);
     };
 
     init();
 
-    const { data: subscription } = supabase.auth.onAuthStateChange(
-      (event) => {
-        if (event === "SIGNED_OUT") setUser(null);
-      }
-    );
+    const { data: subscription } = supabase.auth.onAuthStateChange((event) => {
+      if (event === "SIGNED_OUT") setUser(null);
+    });
 
     return () => subscription?.subscription.unsubscribe();
   }, []);
@@ -51,17 +53,18 @@ export default function Friends() {
   };
 
   const handleAddFriend = async () => {
-    if (!email.trim()) {
-      Alert.alert("Error", "Please enter an email");
+    const cleanTag = tag.replace(/^@/, "").trim();
+    if (!cleanTag) {
+      Alert.alert("Enter a rider tag", "Type their @tag to add them.");
       return;
     }
     try {
-      await addFriend(user.id, email.trim());
-      Alert.alert("Added", "Rider added to your crew!");
-      setEmail("");
+      await addFriend(user.id, cleanTag);
+      Alert.alert("Added!", `@${cleanTag} is now in your crew.`);
+      setTag("");
       fetchFriends(user.id);
     } catch (e: any) {
-      Alert.alert("Error", e.message || "Failed to add rider");
+      Alert.alert("Couldn't add rider", e.message);
     }
   };
 
@@ -114,18 +117,22 @@ export default function Friends() {
   return (
     <View style={styles.container}>
       <Text style={styles.title}>CREW</Text>
-      <Text style={styles.subtitle}>{user?.email}</Text>
+      <Text style={styles.subtitle}>{selfUsername ? `@${selfUsername}` : user?.email}</Text>
 
+      {/* Tag input */}
       <View style={styles.addContainer}>
-        <TextInput
-          style={styles.input}
-          placeholder="Add rider by email"
-          placeholderTextColor="#444"
-          value={email}
-          onChangeText={setEmail}
-          autoCapitalize="none"
-          keyboardType="email-address"
-        />
+        <View style={styles.inputWrapper}>
+          <Text style={styles.atSign}>@</Text>
+          <TextInput
+            style={styles.input}
+            placeholder="rider tag"
+            placeholderTextColor="#333"
+            value={tag}
+            onChangeText={(t) => setTag(t.replace(/^@/, "").toLowerCase())}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+        </View>
         <TouchableOpacity style={styles.addButton} onPress={handleAddFriend}>
           <Ionicons name="add" size={22} color="#fff" />
         </TouchableOpacity>
@@ -140,7 +147,7 @@ export default function Friends() {
           <View style={styles.emptyContainer}>
             <Text style={styles.emptyText}>No crew yet</Text>
             <Text style={styles.emptySubText}>
-              Add riders by their email to see them on the map
+              Add riders by their @tag — they can find theirs in the ME tab
             </Text>
           </View>
         }
@@ -150,7 +157,12 @@ export default function Friends() {
               <View style={styles.friendDot} />
               <View>
                 <Text style={styles.name}>{item.friend.name}</Text>
-                <Text style={styles.email}>{item.friend.email}</Text>
+                {item.friend.username ? (
+                  <Text style={styles.handle}>@{item.friend.username}</Text>
+                ) : null}
+                {item.friend.bike ? (
+                  <Text style={styles.bike}>{item.friend.bike}</Text>
+                ) : null}
               </View>
             </View>
             <TouchableOpacity
@@ -199,13 +211,25 @@ const styles = StyleSheet.create({
     gap: 10,
     marginBottom: 28,
   },
-  input: {
+  inputWrapper: {
     flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
     backgroundColor: "#111",
     borderWidth: 1,
     borderColor: "#1e1e1e",
     borderRadius: 10,
-    padding: 14,
+    paddingHorizontal: 14,
+  },
+  atSign: {
+    color: "#ff4500",
+    fontSize: 16,
+    fontWeight: "700",
+    marginRight: 4,
+  },
+  input: {
+    flex: 1,
+    paddingVertical: 14,
     fontSize: 15,
     color: "#fff",
   },
@@ -247,9 +271,14 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: "#fff",
   },
-  email: {
+  handle: {
     color: "#444",
     fontSize: 12,
+    marginTop: 2,
+  },
+  bike: {
+    color: "#2a2a2a",
+    fontSize: 11,
     marginTop: 2,
   },
   removeButton: {

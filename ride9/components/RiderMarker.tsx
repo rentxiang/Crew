@@ -9,9 +9,16 @@ export default function RiderMarker({ rider }: { rider: any }) {
       coordinate={[rider.longitude, rider.latitude]}
     >
       <View style={styles.container}>
-        <View style={styles.glow} />
-        <Image source={{ uri: rider.avatarUrl }} style={styles.avatar} />
-        <Text style={styles.name}>{rider.name}</Text>
+        <View style={styles.avatarWrapper}>
+          <View style={[styles.glow, rider.isSelf && styles.glowSelf]} />
+          <Image source={{ uri: rider.avatarUrl }} style={[styles.avatar, rider.isSelf && styles.avatarSelf]} />
+        </View>
+        <View style={styles.label}>
+          <Text style={styles.name}>{rider.name}</Text>
+          {rider.bike ? (
+            <Text style={styles.bike}>{rider.bike}</Text>
+          ) : null}
+        </View>
       </View>
     </MarkerView>
   );
@@ -20,6 +27,10 @@ export default function RiderMarker({ rider }: { rider: any }) {
 const styles = StyleSheet.create({
   container: {
     alignItems: "center",
+  },
+  avatarWrapper: {
+    width: 40,
+    height: 40,
   },
   glow: {
     position: "absolute",
@@ -37,16 +48,31 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: "#ff4500",
   },
-  name: {
+  glowSelf: {
+    backgroundColor: "rgba(0, 122, 255, 0.2)",
+  },
+  avatarSelf: {
+    borderColor: "#007aff",
+  },
+  label: {
     marginTop: 5,
-    fontSize: 11,
-    color: "#fff",
+    alignItems: "center",
     backgroundColor: "rgba(8, 8, 8, 0.88)",
     paddingHorizontal: 8,
-    paddingVertical: 3,
+    paddingVertical: 4,
     borderRadius: 6,
+    overflow: "hidden",
+  },
+  name: {
+    fontSize: 11,
+    color: "#fff",
     fontWeight: "700",
     letterSpacing: 0.5,
-    overflow: "hidden",
+  },
+  bike: {
+    fontSize: 10,
+    color: "#888",
+    marginTop: 1,
+    letterSpacing: 0.2,
   },
 });
