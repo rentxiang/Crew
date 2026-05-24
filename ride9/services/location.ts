@@ -32,11 +32,19 @@ export async function startLocationTracking(
 export async function updateLocation(userId: string, lat: number, lng: number) {
   const { error } = await supabase
     .from("locations")
-    .upsert({ user_id: userId, lat, lng, updated_at: new Date() }, { onConflict: "user_id" });
+    .upsert(
+      { user_id: userId, lat, lng, is_sharing: true, updated_at: new Date() },
+      { onConflict: "user_id" }
+    );
 
-  if (error) {
-    console.error("Failed to update location:", error.message);
-  }
+  if (error) console.error("Failed to update location:", error.message);
+}
+
+export async function updateSharingStatus(userId: string, isSharing: boolean) {
+  await supabase
+    .from("locations")
+    .update({ is_sharing: isSharing, updated_at: new Date() })
+    .eq("user_id", userId);
 }
 
 export async function getFriendLocations(userId: string) {
@@ -50,7 +58,7 @@ export async function getFriendLocations(userId: string) {
 
   const { data, error } = await supabase
     .from("locations")
-    .select("user_id, lat, lng, updated_at")
+    .select("user_id, lat, lng, is_sharing, updated_at")
     .in("user_id", friendIds);
 
   if (error) {

@@ -9,7 +9,9 @@ export async function getFriends(userId: string) {
       friend:users!friends_friend_id_fkey (
         id,
         name,
-        email
+        email,
+        bike,
+        avatar_seed
       )
     `
     )

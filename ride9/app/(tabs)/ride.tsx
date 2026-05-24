@@ -6,175 +6,265 @@ import {
   TouchableOpacity,
   FlatList,
   Alert,
+  TextInput,
+  Share,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { supabase } from "../../services/supabase";
-import { getFriends } from "../../services/friends";
-import { getFriendLocations } from "../../services/location";
-
-const ACTIVE_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes
+import { useLocationSharing } from "../../contexts/LocationSharingContext";
+import {
+  createRoom,
+  joinRoom,
+  leaveRoom,
+  deleteRoom,
+  getRoomMembers,
+  subscribeRoomMembers,
+  RoomMember,
+} from "../../services/rooms";
 
 export default function RideScreen() {
-  const [riding, setRiding] = useState(false);
-  const [elapsed, setElapsed] = useState(0);
-  const [friends, setFriends] = useState<any[]>([]);
-  const [locations, setLocations] = useState<any[]>([]);
-  const [authUser, setAuthUser] = useState<any>(null);
+  const { isSharing, startSharing, stopSharing, currentRoom, setCurrentRoom } =
+    useLocationSharing();
 
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const startTimeRef = useRef<number>(0);
+  const [authUser, setAuthUser] = useState<any>(null);
+  const [members, setMembers] = useState<RoomMember[]>([]);
+  const [isJoining, setIsJoining] = useState(false);
+  const [joinCode, setJoinCode] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const realtimeSubRef = useRef<any>(null);
+
+  const isHost = currentRoom?.host_id === authUser?.id;
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
-      if (data?.user) {
-        setAuthUser(data.user);
-        loadData(data.user.id);
-      }
+      if (data?.user) setAuthUser(data.user);
     });
   }, []);
 
+  // Load members whenever room changes
   useEffect(() => {
+    if (!currentRoom) {
+      setMembers([]);
+      realtimeSubRef.current?.unsubscribe();
+      realtimeSubRef.current = null;
+      return;
+    }
+
+    loadMembers();
+
+    realtimeSubRef.current = subscribeRoomMembers(currentRoom.id, loadMembers);
+
+    return () => {
+      realtimeSubRef.current?.unsubscribe();
+      realtimeSubRef.current = null;
+    };
+  }, [currentRoom?.id]);
+
+  const loadMembers = async () => {
+    if (!currentRoom) return;
+    const data = await getRoomMembers(currentRoom.id);
+    setMembers(data);
+  };
+
+  const handleStartRide = async () => {
     if (!authUser) return;
-    const interval = setInterval(() => loadData(authUser.id), 30_000);
-    return () => clearInterval(interval);
-  }, [authUser]);
-
-  const loadData = async (userId: string) => {
-    const [friendData, locationData] = await Promise.all([
-      getFriends(userId),
-      getFriendLocations(userId),
-    ]);
-    setFriends(
-      friendData.map((item: any) => ({
-        user_id: item.friend_id,
-        name: item.friend.name,
-      }))
-    );
-    setLocations(locationData || []);
+    setLoading(true);
+    try {
+      const room = await createRoom(authUser.id);
+      setCurrentRoom(room);
+      if (!isSharing) await startSharing(authUser.id);
+    } catch (e: any) {
+      Alert.alert("Error", e.message);
+    }
+    setLoading(false);
   };
 
-  const startRide = () => {
-    setRiding(true);
-    startTimeRef.current = Date.now();
-    timerRef.current = setInterval(() => {
-      setElapsed(Math.floor((Date.now() - startTimeRef.current) / 1000));
-    }, 1000);
+  const handleJoinRide = async () => {
+    if (!authUser || !joinCode.trim()) return;
+    setLoading(true);
+    try {
+      const room = await joinRoom(joinCode, authUser.id);
+      setCurrentRoom(room);
+      setIsJoining(false);
+      setJoinCode("");
+      if (!isSharing) await startSharing(authUser.id);
+    } catch (e: any) {
+      Alert.alert("Error", e.message);
+    }
+    setLoading(false);
   };
 
-  const endRide = () => {
-    Alert.alert("End Ride", "Are you sure you want to end the ride?", [
+  const handleEndRide = () => {
+    Alert.alert("End Group Ride", "This will remove all riders from the room.", [
       { text: "Cancel", style: "cancel" },
       {
         text: "End Ride",
         style: "destructive",
-        onPress: () => {
-          if (timerRef.current) clearInterval(timerRef.current);
-          setRiding(false);
-          setElapsed(0);
+        onPress: async () => {
+          if (!currentRoom) return;
+          await deleteRoom(currentRoom.id);
+          setCurrentRoom(null);
+          stopSharing();
         },
       },
     ]);
   };
 
-  useEffect(() => () => { if (timerRef.current) clearInterval(timerRef.current); }, []);
-
-  const formatTime = (secs: number) => {
-    const h = Math.floor(secs / 3600);
-    const m = Math.floor((secs % 3600) / 60);
-    const s = secs % 60;
-    return [h, m, s].map((v) => String(v).padStart(2, "0")).join(":");
+  const handleLeaveRide = () => {
+    Alert.alert("Leave Ride", "You'll stop seeing the group's location.", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Leave",
+        style: "destructive",
+        onPress: async () => {
+          if (!currentRoom || !authUser) return;
+          await leaveRoom(currentRoom.id, authUser.id);
+          setCurrentRoom(null);
+          stopSharing();
+        },
+      },
+    ]);
   };
 
-  const activeFriends = friends.filter((f) => {
-    const loc = locations.find((l) => l.user_id === f.user_id);
-    if (!loc?.updated_at) return false;
-    return Date.now() - new Date(loc.updated_at).getTime() < ACTIVE_THRESHOLD_MS;
-  });
-
-  const signOut = async () => {
-    await supabase.auth.signOut();
+  const handleShareCode = () => {
+    if (!currentRoom) return;
+    Share.share({
+      message: `Join my group ride! Code: ${currentRoom.code}`,
+    });
   };
 
+
+  // ─── Idle ────────────────────────────────────────────────────────────────
+  if (!currentRoom && !isJoining) {
+    return (
+      <View style={styles.container}>
+        <View style={styles.header}>
+          <Text style={styles.headerTitle}>GROUP RIDE</Text>
+          <View style={{ width: 20 }} />
+        </View>
+
+        <View style={styles.idleContent}>
+          <Text style={styles.idleIcon}>◎</Text>
+          <Text style={styles.idleTitle}>Start or join a ride</Text>
+          <Text style={styles.idleSubtitle}>
+            Create a room and share the code with your crew — no friend requests needed
+          </Text>
+        </View>
+
+        <View style={styles.idleActions}>
+          <TouchableOpacity
+            style={styles.primaryButton}
+            onPress={handleStartRide}
+            disabled={loading}
+            activeOpacity={0.85}
+          >
+            <Ionicons name="radio-button-on" size={20} color="#fff" />
+            <Text style={styles.primaryButtonText}>
+              {loading ? "Creating..." : "Start Group Ride"}
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.secondaryButton}
+            onPress={() => setIsJoining(true)}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.secondaryButtonText}>Join a Ride</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
+
+  // ─── Join ────────────────────────────────────────────────────────────────
+  if (!currentRoom && isJoining) {
+    return (
+      <View style={styles.container}>
+        <View style={styles.header}>
+          <TouchableOpacity onPress={() => setIsJoining(false)}>
+            <Ionicons name="arrow-back" size={22} color="#fff" />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>JOIN RIDE</Text>
+          <View style={{ width: 22 }} />
+        </View>
+
+        <View style={styles.joinContent}>
+          <Text style={styles.joinLabel}>ROOM CODE</Text>
+          <TextInput
+            style={styles.codeInput}
+            placeholder="Enter 6-digit code"
+            placeholderTextColor="#333"
+            value={joinCode}
+            onChangeText={setJoinCode}
+            keyboardType="number-pad"
+            maxLength={6}
+            autoFocus
+          />
+          <TouchableOpacity
+            style={[styles.primaryButton, !joinCode.trim() && styles.buttonDisabled]}
+            onPress={handleJoinRide}
+            disabled={loading || !joinCode.trim()}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.primaryButtonText}>
+              {loading ? "Joining..." : "Join Ride"}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
+
+  // ─── Active Room ─────────────────────────────────────────────────────────
   return (
     <View style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>GROUP RIDE</Text>
-        <TouchableOpacity onPress={signOut} style={styles.signOutButton}>
-          <Ionicons name="log-out-outline" size={20} color="#444" />
-        </TouchableOpacity>
+        <View style={{ width: 20 }} />
       </View>
 
-      {/* Timer card */}
-      <View style={styles.timerCard}>
-        {riding ? (
-          <>
-            <View style={styles.liveRow}>
-              <View style={styles.liveDot} />
-              <Text style={styles.liveLabel}>LIVE</Text>
-            </View>
-            <Text style={styles.timer}>{formatTime(elapsed)}</Text>
-            <Text style={styles.timerSub}>ride in progress</Text>
-          </>
-        ) : (
-          <>
-            <Text style={styles.timerIdle}>◎</Text>
-            <Text style={styles.timerIdleLabel}>READY TO RIDE</Text>
-          </>
-        )}
-      </View>
-
-      {/* Start / End button */}
+      {/* Room code card */}
       <TouchableOpacity
-        style={[styles.rideButton, riding && styles.rideButtonEnd]}
-        onPress={riding ? endRide : startRide}
+        style={styles.codeCard}
+        onPress={handleShareCode}
         activeOpacity={0.8}
       >
-        <Ionicons
-          name={riding ? "stop-circle" : "radio-button-on"}
-          size={22}
-          color={riding ? "#ff4500" : "#fff"}
-        />
-        <Text style={[styles.rideButtonText, riding && styles.rideButtonTextEnd]}>
-          {riding ? "END RIDE" : "START RIDE"}
-        </Text>
+        <View style={styles.codeCardTop}>
+          <View style={styles.liveRow}>
+            <View style={styles.liveDot} />
+            <Text style={styles.liveLabel}>LIVE · {isHost ? "HOSTING" : "JOINED"}</Text>
+          </View>
+          <Ionicons name="share-outline" size={18} color="#444" />
+        </View>
+        <Text style={styles.roomCode}>{currentRoom!.code}</Text>
+        <Text style={styles.codeTap}>Tap to share with crew</Text>
       </TouchableOpacity>
 
-      {/* Active riders */}
-      <Text style={styles.sectionLabel}>
-        CREW ONLINE · {activeFriends.length}
-      </Text>
+      {/* Members list */}
+      <Text style={styles.sectionLabel}>RIDERS · {members.length}</Text>
 
       <FlatList
-        data={activeFriends}
+        data={members}
         keyExtractor={(item) => item.user_id}
-        scrollEnabled={false}
-        contentContainerStyle={styles.riderList}
+        contentContainerStyle={styles.memberList}
         ListEmptyComponent={
-          <View style={styles.emptyContainer}>
-            <Text style={styles.emptyText}>No crew online right now</Text>
-            <Text style={styles.emptySubText}>
-              Friends appear here when they're actively sharing location
-            </Text>
-          </View>
+          <Text style={styles.emptyText}>Waiting for riders to join...</Text>
         }
         renderItem={({ item }) => {
-          const loc = locations.find((l) => l.user_id === item.user_id);
-          const minutesAgo = loc?.updated_at
-            ? Math.floor(
-                (Date.now() - new Date(loc.updated_at).getTime()) / 60_000
-              )
-            : null;
-
+          const isMe = item.user_id === authUser?.id;
+          const isRoomHost = item.user_id === currentRoom?.host_id;
           return (
-            <View style={styles.riderRow}>
-              <View style={styles.riderLeft}>
-                <View style={styles.riderDot} />
+            <View style={styles.memberRow}>
+              <View style={styles.memberLeft}>
+                <View style={[styles.memberDot, isMe && styles.memberDotMe]} />
                 <View>
-                  <Text style={styles.riderName}>{item.name}</Text>
-                  {minutesAgo !== null && (
-                    <Text style={styles.riderMeta}>
-                      {minutesAgo === 0 ? "Just now" : `${minutesAgo}m ago`}
-                    </Text>
+                  <Text style={styles.memberName}>
+                    {item.name}
+                    {isMe ? "  (you)" : ""}
+                  </Text>
+                  {isRoomHost && (
+                    <Text style={styles.hostBadge}>host</Text>
                   )}
                 </View>
               </View>
@@ -183,6 +273,17 @@ export default function RideScreen() {
           );
         }}
       />
+
+      {/* End / Leave button */}
+      <TouchableOpacity
+        style={styles.endButton}
+        onPress={isHost ? handleEndRide : handleLeaveRide}
+        activeOpacity={0.8}
+      >
+        <Text style={styles.endButtonText}>
+          {isHost ? "End Group Ride" : "Leave Ride"}
+        </Text>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -209,20 +310,114 @@ const styles = StyleSheet.create({
   signOutButton: {
     padding: 4,
   },
-  timerCard: {
+
+  // Idle
+  idleContent: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 12,
+    paddingBottom: 40,
+  },
+  idleIcon: {
+    fontSize: 56,
+    color: "#222",
+    marginBottom: 8,
+  },
+  idleTitle: {
+    color: "#fff",
+    fontSize: 18,
+    fontWeight: "700",
+  },
+  idleSubtitle: {
+    color: "#444",
+    fontSize: 13,
+    textAlign: "center",
+    lineHeight: 20,
+    maxWidth: 260,
+  },
+  idleActions: {
+    gap: 10,
+    paddingBottom: 32,
+  },
+
+  // Join
+  joinContent: {
+    flex: 1,
+    gap: 16,
+    paddingTop: 20,
+  },
+  joinLabel: {
+    color: "#444",
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 3,
+  },
+  codeInput: {
+    backgroundColor: "#111",
+    borderWidth: 1,
+    borderColor: "#1e1e1e",
+    borderRadius: 14,
+    padding: 20,
+    fontSize: 32,
+    fontWeight: "300",
+    color: "#fff",
+    letterSpacing: 10,
+    textAlign: "center",
+  },
+
+  // Buttons
+  primaryButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#ff4500",
+    borderRadius: 14,
+    padding: 18,
+    gap: 10,
+  },
+  primaryButtonText: {
+    color: "#fff",
+    fontSize: 15,
+    fontWeight: "800",
+    letterSpacing: 1,
+  },
+  secondaryButton: {
+    borderWidth: 1,
+    borderColor: "#1e1e1e",
+    borderRadius: 14,
+    padding: 18,
+    alignItems: "center",
+  },
+  secondaryButtonText: {
+    color: "#666",
+    fontSize: 15,
+    fontWeight: "600",
+  },
+  buttonDisabled: {
+    opacity: 0.4,
+  },
+
+  // Code card
+  codeCard: {
     backgroundColor: "#0f0f0f",
     borderRadius: 20,
-    padding: 36,
-    alignItems: "center",
-    marginBottom: 16,
     borderWidth: 1,
     borderColor: "#191919",
+    padding: 24,
+    marginBottom: 28,
+    gap: 6,
+  },
+  codeCardTop: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 8,
   },
   liveRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-    marginBottom: 14,
   },
   liveDot: {
     width: 8,
@@ -234,56 +429,21 @@ const styles = StyleSheet.create({
     color: "#ff4500",
     fontSize: 11,
     fontWeight: "800",
-    letterSpacing: 4,
-  },
-  timer: {
-    color: "#fff",
-    fontSize: 52,
-    fontWeight: "200",
-    letterSpacing: 4,
-  },
-  timerSub: {
-    color: "#333",
-    fontSize: 11,
-    letterSpacing: 2,
-    marginTop: 8,
-    textTransform: "uppercase",
-  },
-  timerIdle: {
-    color: "#222",
-    fontSize: 48,
-    marginBottom: 12,
-  },
-  timerIdleLabel: {
-    color: "#333",
-    fontSize: 13,
-    fontWeight: "700",
-    letterSpacing: 4,
-  },
-  rideButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#ff4500",
-    borderRadius: 14,
-    padding: 18,
-    gap: 10,
-    marginBottom: 32,
-  },
-  rideButtonEnd: {
-    backgroundColor: "transparent",
-    borderWidth: 1,
-    borderColor: "#ff4500",
-  },
-  rideButtonText: {
-    color: "#fff",
-    fontSize: 14,
-    fontWeight: "800",
     letterSpacing: 3,
   },
-  rideButtonTextEnd: {
-    color: "#ff4500",
+  roomCode: {
+    color: "#fff",
+    fontSize: 48,
+    fontWeight: "200",
+    letterSpacing: 10,
   },
+  codeTap: {
+    color: "#333",
+    fontSize: 12,
+    letterSpacing: 1,
+  },
+
+  // Members
   sectionLabel: {
     color: "#333",
     fontSize: 10,
@@ -291,10 +451,11 @@ const styles = StyleSheet.create({
     letterSpacing: 3,
     marginBottom: 12,
   },
-  riderList: {
+  memberList: {
     gap: 0,
+    flexGrow: 1,
   },
-  riderRow: {
+  memberRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
@@ -302,41 +463,51 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: "#111",
   },
-  riderLeft: {
+  memberLeft: {
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
   },
-  riderDot: {
+  memberDot: {
     width: 10,
     height: 10,
     borderRadius: 5,
     backgroundColor: "#00ff88",
   },
-  riderName: {
+  memberDotMe: {
+    backgroundColor: "#ff4500",
+  },
+  memberName: {
     color: "#fff",
     fontSize: 15,
     fontWeight: "600",
   },
-  riderMeta: {
+  hostBadge: {
     color: "#444",
-    fontSize: 12,
+    fontSize: 11,
     marginTop: 2,
-  },
-  emptyContainer: {
-    paddingVertical: 32,
-    alignItems: "center",
-    gap: 8,
+    letterSpacing: 1,
   },
   emptyText: {
     color: "#333",
+    textAlign: "center",
+    paddingVertical: 32,
+    fontSize: 14,
+  },
+
+  // End button
+  endButton: {
+    borderWidth: 1,
+    borderColor: "#1e1e1e",
+    borderRadius: 14,
+    padding: 16,
+    alignItems: "center",
+    marginTop: "auto",
+    marginBottom: 24,
+  },
+  endButtonText: {
+    color: "#555",
     fontSize: 14,
     fontWeight: "600",
-  },
-  emptySubText: {
-    color: "#222",
-    fontSize: 12,
-    textAlign: "center",
-    lineHeight: 18,
   },
 });

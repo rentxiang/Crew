@@ -4,6 +4,7 @@ import { StatusBar } from "expo-status-bar";
 import { useEffect, useState } from "react";
 import "react-native-reanimated";
 import { supabase } from "@/services/supabase";
+import { LocationSharingProvider } from "@/contexts/LocationSharingContext";
 
 export const unstable_settings = {
   anchor: "(tabs)",
@@ -44,11 +45,13 @@ export default function RootLayout() {
 
   return (
     <ThemeProvider value={DarkTheme}>
-      <Stack>
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="login" options={{ headerShown: false }} />
-      </Stack>
-      <StatusBar style="light" />
+      <LocationSharingProvider>
+        <Stack>
+          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+          <Stack.Screen name="login" options={{ headerShown: false }} />
+        </Stack>
+        <StatusBar style="light" />
+      </LocationSharingProvider>
     </ThemeProvider>
   );
 }
