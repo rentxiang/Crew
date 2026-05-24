@@ -2,8 +2,8 @@ import Mapbox, { Camera, LocationPuck, MapView } from "@rnmapbox/maps";
 import { useEffect, useState, useRef } from "react";
 import { StyleSheet, TouchableOpacity, View, Text } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-
-import FriendMarker from "../../components/FriendMaker";
+import { supabase } from "@/services/supabase";
+import RiderMarker from "../../components/RiderMarker";
 import {
   startLocationTracking,
   updateLocation,
@@ -11,65 +11,48 @@ import {
 } from "../../services/location";
 import { subscribeLocations } from "../../services/realtime";
 import { getFriends } from "../../services/friends";
-import { supabase } from "@/services/supabase";
 
 Mapbox.setAccessToken(process.env.EXPO_PUBLIC_MAPBOX_KEY || "");
 
-export default function Map() {
-  const [friends, setFriends] = useState<any[]>([]); // 👈 用户信息
-  const [locations, setLocations] = useState<any[]>([]); // 👈 位置
+export default function MapScreen() {
+  const [friends, setFriends] = useState<any[]>([]);
+  const [locations, setLocations] = useState<any[]>([]);
   const [authUser, setAuthUser] = useState<any>(null);
-  const [theme, setTheme] = useState<"light" | "dark">("dark");
+  const [centered, setCentered] = useState(false);
 
-  const coordsRef = useRef<{ latitude: number; longitude: number } | null>(
-    null
-  );
+  const coordsRef = useRef<{ latitude: number; longitude: number } | null>(null);
   const cameraRef = useRef<Camera>(null);
 
-  // ========================
-  // Auth
-  // ========================
   useEffect(() => {
-    const init = async () => {
-      const { data } = await supabase.auth.getUser();
+    supabase.auth.getUser().then(({ data }) => {
       if (data?.user) {
         setAuthUser(data.user);
         loadFriends(data.user.id);
       }
-    };
-
-    init();
+    });
 
     const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === "SIGNED_IN" && session?.user) {
         setAuthUser(session.user);
         loadFriends(session.user.id);
       }
+      if (event === "SIGNED_OUT") {
+        setAuthUser(null);
+        setFriends([]);
+        setLocations([]);
+      }
     });
 
-    return () => {
-      sub?.subscription.unsubscribe();
-    };
+    return () => sub?.subscription.unsubscribe();
   }, []);
 
-  // ========================
-  // Load friends（静态）
-  // ========================
   useEffect(() => {
     if (!authUser) return;
-
-    const loadInitialLocations = async () => {
-      const data = await getFriendLocations(authUser.id);
-
-      setLocations(data || []);
-    };
-
-    loadInitialLocations();
+    getFriendLocations(authUser.id).then((data) => setLocations(data || []));
   }, [authUser]);
 
   const loadFriends = async (userId: string) => {
     const data = await getFriends(userId);
-
     setFriends(
       data.map((item: any) => ({
         user_id: item.friend_id,
@@ -80,136 +63,136 @@ export default function Map() {
     );
   };
 
-  // 3s refresh friend locations
   useEffect(() => {
     if (!authUser) return;
-
-    const interval = setInterval(async () => {
-      const data = await getFriendLocations(authUser.id);
-      setLocations(data || []);
-    }, 3000); // 每 3 秒调用一次
-
-    return () => {
-      clearInterval(interval); // 清除定时器，避免内存泄漏
-    };
-  }, [authUser]);
-
-  // ========================
-  // Location tracking（自己）
-  // ========================
-  useEffect(() => {
-    if (!authUser) return;
-
     let locationSub: any = null;
 
     startLocationTracking((coords) => {
       coordsRef.current = coords;
-
       updateLocation(authUser.id, coords.latitude, coords.longitude);
+
+      if (!centered && cameraRef.current) {
+        cameraRef.current.flyTo([coords.longitude, coords.latitude], 800);
+        setCentered(true);
+      }
     }).then((sub) => {
       locationSub = sub;
     });
 
-    return () => {
-      locationSub?.remove();
-    };
+    return () => locationSub?.remove();
   }, [authUser]);
 
   useEffect(() => {
-    console.log("Friends:", friends);
-  }, [friends]);
-
-  // ========================
-  // Realtime（好友位置）
-  // ========================
-  useEffect(() => {
     if (!authUser || friends.length === 0) return;
-
     const friendIds = friends.map((f) => f.user_id);
-
     const sub = subscribeLocations(friendIds, setLocations);
-
-    return () => {
-      sub?.unsubscribe();
-    };
+    return () => { sub?.unsubscribe(); };
   }, [friends]);
 
-  // ========================
-  // merge（核心！！！）
-  // ========================
   const mergedFriends = friends.map((f) => {
     const loc = locations.find((l) => l.user_id === f.user_id);
-
-    return {
-      ...f,
-      latitude: loc?.lat,
-      longitude: loc?.lng,
-    };
+    return { ...f, latitude: loc?.lat, longitude: loc?.lng };
   });
-  // ========================
-  // UI
-  // ========================
-  return (
-    <View style={{ flex: 1 }}>
-      <MapView
-        style={{ flex: 1 }}
-        styleURL={theme === "dark" ? "mapbox://styles/mapbox/dark-v11" : ""}
-      >
-        <Camera ref={cameraRef} zoomLevel={16} followUserLocation={false} />
 
+  const activeCount = mergedFriends.filter((f) => f.latitude && f.longitude).length;
+
+  const centerOnUser = () => {
+    if (coordsRef.current && cameraRef.current) {
+      const { latitude, longitude } = coordsRef.current;
+      cameraRef.current.flyTo([longitude, latitude], 600);
+    }
+  };
+
+  return (
+    <View style={styles.container}>
+      <MapView style={styles.map} styleURL="mapbox://styles/mapbox/dark-v11">
+        <Camera
+          ref={cameraRef}
+          zoomLevel={15}
+          followUserLocation={false}
+          animationMode="flyTo"
+        />
         <LocationPuck
           puckBearing="heading"
           puckBearingEnabled
           pulsing={{ isEnabled: true }}
         />
-
-        {/* 👇 渲染真实好友 */}
         {mergedFriends.map((f) =>
           f.latitude && f.longitude ? (
-            <FriendMarker key={f.user_id} friend={f} />
+            <RiderMarker key={f.user_id} rider={f} />
           ) : null
         )}
       </MapView>
 
-      {/* Theme toggle */}
-      <TouchableOpacity
-        style={styles.iconButton}
-        onPress={() => setTheme((prev) => (prev === "dark" ? "light" : "dark"))}
-      >
-        <Ionicons name="sunny" size={24} color="black" />
-      </TouchableOpacity>
+      {/* HUD */}
+      <View style={styles.hud}>
+        <View style={styles.hudBadge}>
+          <View style={[styles.liveDot, activeCount > 0 && styles.liveDotActive]} />
+          <Text style={styles.hudText}>
+            {activeCount > 0
+              ? `${activeCount} RIDER${activeCount > 1 ? "S" : ""} LIVE`
+              : "NO RIDERS ONLINE"}
+          </Text>
+        </View>
+      </View>
 
-      {/* Center button */}
-      <TouchableOpacity
-        style={styles.centerButton}
-        onPress={() => {
-          if (coordsRef.current && cameraRef.current) {
-            const { latitude, longitude } = coordsRef.current;
-            cameraRef.current.flyTo([longitude, latitude], 1000);
-          }
-        }}
-      >
-        <Ionicons name="locate" size={24} color="black" />
+      {/* Center */}
+      <TouchableOpacity style={styles.centerButton} onPress={centerOnUser}>
+        <Ionicons name="locate" size={20} color="#fff" />
       </TouchableOpacity>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  iconButton: {
+  container: {
+    flex: 1,
+  },
+  map: {
+    flex: 1,
+  },
+  hud: {
     position: "absolute",
-    top: 80,
-    right: 15,
-    backgroundColor: "white",
-    padding: 6,
-    borderRadius: 18,
+    top: 60,
+    left: 0,
+    right: 0,
+    alignItems: "center",
+    pointerEvents: "none",
+  },
+  hudBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(8, 8, 8, 0.88)",
+    borderWidth: 1,
+    borderColor: "#1e1e1e",
+    paddingHorizontal: 16,
+    paddingVertical: 9,
+    borderRadius: 24,
+    gap: 8,
+  },
+  liveDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: "#333",
+  },
+  liveDotActive: {
+    backgroundColor: "#ff4500",
+  },
+  hudText: {
+    color: "#fff",
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 2.5,
   },
   centerButton: {
     position: "absolute",
-    bottom: 80,
-    right: 15,
-    backgroundColor: "white",
-    padding: 6,
-    borderRadius: 18,
+    bottom: 100,
+    right: 16,
+    backgroundColor: "rgba(10, 10, 10, 0.9)",
+    borderWidth: 1,
+    borderColor: "#222",
+    padding: 13,
+    borderRadius: 14,
   },
 });

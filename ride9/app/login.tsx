@@ -6,170 +6,181 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
+  KeyboardAvoidingView,
+  Platform,
 } from "react-native";
 import { supabase } from "../services/supabase";
-import { useRouter } from "expo-router";
 
 export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
-  const router = useRouter();
+  const [mode, setMode] = useState<"signin" | "signup">("signin");
 
-  // 插入或更新用户到数据库
   async function upsertUser(userId: string, email: string) {
-    const { error } = await supabase.from("users").upsert({
+    await supabase.from("users").upsert({
       id: userId,
-      email: email,
-      name: email.split("@")[0], // 默认名称为邮箱的前缀
+      email,
+      name: email.split("@")[0],
     });
-
-    if (error) {
-      console.error("Failed to upsert user:", error.message);
-      Alert.alert("Error", "Failed to save user to the database.");
-    } else {
-      console.log("User successfully added or updated in the database.");
-    }
   }
 
-  // 登录
   async function signInWithEmail() {
     setLoading(true);
-    const { data: session, error } = await supabase.auth.signInWithPassword({
-      email: email,
-      password: password,
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
     });
-
     if (error) {
-      Alert.alert(error.message);
-    } else if (session?.user) {
-      // 登录成功后将用户信息插入或更新到数据库
-      if (session.user.email) {
-        await upsertUser(session.user.id, session.user.email);
-      } else {
-        console.error("User email is undefined.");
-        Alert.alert("Error", "User email is undefined.");
-      }
-      // 跳转到 friends 页面
-      router.replace("/(tabs)/friends");
+      Alert.alert("Sign In Failed", error.message);
+    } else if (data?.user?.email) {
+      await upsertUser(data.user.id, data.user.email);
     }
     setLoading(false);
   }
 
-  // 注册
   async function signUpWithEmail() {
     setLoading(true);
     const {
-      data: { user, session },
+      data: { user },
       error,
-    } = await supabase.auth.signUp({
-      email: email,
-      password: password,
-    });
-
+    } = await supabase.auth.signUp({ email, password });
     if (error) {
-      Alert.alert(error.message);
-    } else if (user) {
-      // 注册成功后将用户信息插入到数据库
-      if (user.email) {
-        await upsertUser(user.id, user.email);
-        console.log(
-          "User successfully registered and added to the database.",
-          user.id,
-          user.email
-        );
-      } else {
-        console.error("User email is undefined.");
-        Alert.alert("Error", "User email is undefined.");
-      }
-      Alert.alert("Success", "Please check your inbox for email verification!");
+      Alert.alert("Sign Up Failed", error.message);
+    } else if (user?.email) {
+      await upsertUser(user.id, user.email);
+      Alert.alert("Check your inbox", "Verify your email to start riding.");
     }
     setLoading(false);
   }
 
   return (
-    <View style={styles.container}>
-      <View style={[styles.verticallySpaced, styles.mt20]}>
-        <Text style={styles.label}>Email</Text>
-        <TextInput
-          onChangeText={(text) => setEmail(text)}
-          value={email}
-          placeholder="email@address.com"
-          autoCapitalize="none"
-          style={styles.input}
-        />
+    <KeyboardAvoidingView
+      style={styles.container}
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+    >
+      <View style={styles.content}>
+        <Text style={styles.logo}>◎</Text>
+        <Text style={styles.title}>RIDE</Text>
+        <Text style={styles.subtitle}>live group ride tracking</Text>
+
+        <View style={styles.form}>
+          <TextInput
+            style={styles.input}
+            placeholder="Email"
+            placeholderTextColor="#444"
+            value={email}
+            onChangeText={setEmail}
+            autoCapitalize="none"
+            keyboardType="email-address"
+          />
+          <TextInput
+            style={styles.input}
+            placeholder="Password"
+            placeholderTextColor="#444"
+            value={password}
+            onChangeText={setPassword}
+            secureTextEntry
+            autoCapitalize="none"
+          />
+
+          <TouchableOpacity
+            style={[styles.button, loading && styles.buttonDisabled]}
+            onPress={mode === "signin" ? signInWithEmail : signUpWithEmail}
+            disabled={loading}
+          >
+            <Text style={styles.buttonText}>
+              {loading
+                ? "..."
+                : mode === "signin"
+                ? "RIDE IN"
+                : "CREATE ACCOUNT"}
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.switchMode}
+            onPress={() =>
+              setMode(mode === "signin" ? "signup" : "signin")
+            }
+          >
+            <Text style={styles.switchText}>
+              {mode === "signin"
+                ? "New rider? Create account"
+                : "Already have an account? Sign in"}
+            </Text>
+          </TouchableOpacity>
+        </View>
       </View>
-      <View style={styles.verticallySpaced}>
-        <Text style={styles.label}>Password</Text>
-        <TextInput
-          onChangeText={(text) => setPassword(text)}
-          value={password}
-          secureTextEntry={true}
-          placeholder="Password has to be at least 6 characters"
-          autoCapitalize="none"
-          style={styles.input}
-        />
-      </View>
-      <View style={[styles.verticallySpaced, styles.mt20]}>
-        <TouchableOpacity
-          style={[styles.button, loading && styles.buttonDisabled]}
-          onPress={() => signInWithEmail()}
-          disabled={loading}
-        >
-          <Text style={styles.buttonText}>Sign in</Text>
-        </TouchableOpacity>
-      </View>
-      <View style={styles.verticallySpaced}>
-        <TouchableOpacity
-          style={[styles.button, loading && styles.buttonDisabled]}
-          onPress={() => signUpWithEmail()}
-          disabled={loading}
-        >
-          <Text style={styles.buttonText}>Sign up</Text>
-        </TouchableOpacity>
-      </View>
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
-    marginTop: 40,
-    padding: 12,
+    flex: 1,
+    backgroundColor: "#080808",
   },
-  verticallySpaced: {
-    paddingTop: 4,
-    paddingBottom: 4,
-    alignSelf: "stretch",
+  content: {
+    flex: 1,
+    justifyContent: "center",
+    paddingHorizontal: 32,
   },
-  mt20: {
-    marginTop: 20,
+  logo: {
+    fontSize: 52,
+    textAlign: "center",
+    color: "#ff4500",
+    marginBottom: 8,
   },
-  label: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#86939e",
-    marginBottom: 6,
+  title: {
+    fontSize: 40,
+    fontWeight: "900",
+    color: "#ffffff",
+    textAlign: "center",
+    letterSpacing: 14,
+  },
+  subtitle: {
+    color: "#444",
+    textAlign: "center",
+    marginBottom: 52,
+    letterSpacing: 3,
+    fontSize: 12,
+    textTransform: "uppercase",
+  },
+  form: {
+    gap: 12,
   },
   input: {
+    backgroundColor: "#111",
     borderWidth: 1,
-    borderColor: "#86939e",
-    borderRadius: 4,
-    padding: 12,
+    borderColor: "#1e1e1e",
+    borderRadius: 10,
+    padding: 16,
     fontSize: 16,
+    color: "#fff",
   },
   button: {
-    backgroundColor: "#2089dc",
-    borderRadius: 4,
-    padding: 12,
+    backgroundColor: "#ff4500",
+    borderRadius: 10,
+    padding: 16,
     alignItems: "center",
+    marginTop: 6,
   },
   buttonDisabled: {
-    opacity: 0.5,
+    opacity: 0.4,
   },
   buttonText: {
     color: "#fff",
-    fontSize: 16,
-    fontWeight: "600",
+    fontSize: 14,
+    fontWeight: "800",
+    letterSpacing: 3,
+  },
+  switchMode: {
+    alignItems: "center",
+    paddingVertical: 14,
+  },
+  switchText: {
+    color: "#444",
+    fontSize: 14,
   },
 });

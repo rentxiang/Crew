@@ -1,17 +1,15 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../../services/supabase";
-import { useRouter } from "expo-router";
 import {
   View,
   Text,
   StyleSheet,
   TextInput,
-  Button,
   FlatList,
   Alert,
   TouchableOpacity,
 } from "react-native";
-
+import { Ionicons } from "@expo/vector-icons";
 import { getFriends, addFriend, removeFriend } from "../../services/friends";
 
 export default function Friends() {
@@ -22,20 +20,10 @@ export default function Friends() {
   >([]);
   const [email, setEmail] = useState("");
 
-  const router = useRouter();
-
-  // ========================
-  // Auth + 初始加载
-  // ========================
   useEffect(() => {
     const init = async () => {
       const { data, error } = await supabase.auth.getUser();
-
-      if (error || !data?.user) {
-        router.push("/login");
-        return;
-      }
-
+      if (error || !data?.user) return;
       setUser(data.user);
       await fetchFriends(data.user.id);
       setLoading(false);
@@ -44,24 +32,16 @@ export default function Friends() {
     init();
 
     const { data: subscription } = supabase.auth.onAuthStateChange(
-      (event, session) => {
-        if (event === "SIGNED_OUT") {
-          router.push("/login");
-        }
+      (event) => {
+        if (event === "SIGNED_OUT") setUser(null);
       }
     );
 
-    return () => {
-      subscription?.subscription.unsubscribe();
-    };
+    return () => subscription?.subscription.unsubscribe();
   }, []);
 
-  // ========================
-  // 获取好友列表
-  // ========================
   const fetchFriends = async (userId: string) => {
     const data = await getFriends(userId);
-
     setFriends(
       data.map((item: any) => ({
         friend_id: item.friend_id,
@@ -70,41 +50,39 @@ export default function Friends() {
     );
   };
 
-  // ========================
-  // 添加好友
-  // ========================
   const handleAddFriend = async () => {
     if (!email.trim()) {
       Alert.alert("Error", "Please enter an email");
       return;
     }
-
     try {
       await addFriend(user.id, email.trim());
-
-      Alert.alert("Success", "Friend added!");
+      Alert.alert("Added", "Rider added to your crew!");
       setEmail("");
       fetchFriends(user.id);
     } catch (e: any) {
-      Alert.alert("Error", e.message || "Failed to add friend");
+      Alert.alert("Error", e.message || "Failed to add rider");
     }
   };
 
-  // ========================
-  // 删除好友
-  // ========================
   const handleRemoveFriend = async (friendId: string) => {
-    try {
-      await removeFriend(user.id, friendId);
-      fetchFriends(user.id);
-    } catch {
-      Alert.alert("Error", "Failed to remove friend");
-    }
+    Alert.alert("Remove Rider", "Remove this rider from your crew?", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Remove",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            await removeFriend(user.id, friendId);
+            fetchFriends(user.id);
+          } catch {
+            Alert.alert("Error", "Failed to remove rider");
+          }
+        },
+      },
+    ]);
   };
 
-  // ========================
-  // Realtime（自动刷新）
-  // ========================
   useEffect(() => {
     if (!user) return;
 
@@ -118,70 +96,68 @@ export default function Friends() {
           table: "friends",
           filter: `user_id=eq.${user.id}`,
         },
-        () => {
-          fetchFriends(user.id);
-        }
+        () => fetchFriends(user.id)
       )
       .subscribe();
 
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    return () => { supabase.removeChannel(channel); };
   }, [user]);
 
-  // ========================
-  // Loading
-  // ========================
   if (loading) {
     return (
-      <View style={styles.container}>
-        <Text>Loading...</Text>
+      <View style={styles.loadingContainer}>
+        <Text style={styles.loadingText}>Loading...</Text>
       </View>
     );
   }
 
-  // ========================
-  // UI
-  // ========================
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Friends</Text>
-      <Text style={styles.subtitle}>Logged in as: {user.email}</Text>
+      <Text style={styles.title}>CREW</Text>
+      <Text style={styles.subtitle}>{user?.email}</Text>
 
-      {/* 添加好友 */}
       <View style={styles.addContainer}>
         <TextInput
           style={styles.input}
-          placeholder="Enter friend's email"
+          placeholder="Add rider by email"
+          placeholderTextColor="#444"
           value={email}
           onChangeText={setEmail}
+          autoCapitalize="none"
+          keyboardType="email-address"
         />
         <TouchableOpacity style={styles.addButton} onPress={handleAddFriend}>
-          <Text style={styles.buttonText}>Add</Text>
+          <Ionicons name="add" size={22} color="#fff" />
         </TouchableOpacity>
       </View>
 
-      {/* 好友列表 */}
+      <Text style={styles.sectionLabel}>RIDERS · {friends.length}</Text>
+
       <FlatList
         data={friends}
         keyExtractor={(item) => item.friend_id}
         ListEmptyComponent={
-          <Text style={{ textAlign: "center", marginTop: 20 }}>
-            No friends yet.
-          </Text>
+          <View style={styles.emptyContainer}>
+            <Text style={styles.emptyText}>No crew yet</Text>
+            <Text style={styles.emptySubText}>
+              Add riders by their email to see them on the map
+            </Text>
+          </View>
         }
         renderItem={({ item }) => (
           <View style={styles.friendItem}>
-            <View>
-              <Text style={styles.name}>{item.friend.name}</Text>
-              <Text style={styles.email}>{item.friend.email}</Text>
+            <View style={styles.friendInfo}>
+              <View style={styles.friendDot} />
+              <View>
+                <Text style={styles.name}>{item.friend.name}</Text>
+                <Text style={styles.email}>{item.friend.email}</Text>
+              </View>
             </View>
-
             <TouchableOpacity
               style={styles.removeButton}
               onPress={() => handleRemoveFriend(item.friend_id)}
             >
-              <Text style={styles.buttonText}>Remove</Text>
+              <Ionicons name="close" size={16} color="#444" />
             </TouchableOpacity>
           </View>
         )}
@@ -190,67 +166,109 @@ export default function Friends() {
   );
 }
 
-// ========================
-// Styles
-// ========================
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    top:80,
-    padding: 20,
-    backgroundColor: "#fff",
+    paddingTop: 60,
+    paddingHorizontal: 20,
+    backgroundColor: "#080808",
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#080808",
+  },
+  loadingText: {
+    color: "#444",
   },
   title: {
-    fontSize: 24,
-    fontWeight: "bold",
+    fontSize: 18,
+    fontWeight: "900",
+    color: "#fff",
+    letterSpacing: 6,
+    marginBottom: 4,
   },
   subtitle: {
-    marginTop: 4,
-    marginBottom: 20,
-    color: "#666",
+    color: "#444",
+    fontSize: 12,
+    marginBottom: 28,
   },
   addContainer: {
     flexDirection: "row",
-    marginBottom: 20,
+    gap: 10,
+    marginBottom: 28,
   },
   input: {
     flex: 1,
+    backgroundColor: "#111",
     borderWidth: 1,
-    borderColor: "#ccc",
-    padding: 10,
-    borderRadius: 6,
-    marginRight: 10,
+    borderColor: "#1e1e1e",
+    borderRadius: 10,
+    padding: 14,
+    fontSize: 15,
+    color: "#fff",
   },
   addButton: {
-    backgroundColor: "#007AFF",
+    backgroundColor: "#ff4500",
     paddingHorizontal: 16,
     justifyContent: "center",
-    borderRadius: 6,
+    alignItems: "center",
+    borderRadius: 10,
   },
-  removeButton: {
-    backgroundColor: "#FF3B30",
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 6,
-  },
-  buttonText: {
-    color: "#fff",
-    fontWeight: "600",
+  sectionLabel: {
+    color: "#333",
+    fontSize: 10,
+    fontWeight: "700",
+    letterSpacing: 3,
+    marginBottom: 12,
   },
   friendItem: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    paddingVertical: 12,
+    paddingVertical: 16,
     borderBottomWidth: 1,
-    borderBottomColor: "#eee",
+    borderBottomColor: "#111",
+  },
+  friendInfo: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  friendDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: "#222",
   },
   name: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: "600",
+    color: "#fff",
   },
   email: {
-    color: "#666",
+    color: "#444",
     fontSize: 12,
+    marginTop: 2,
+  },
+  removeButton: {
+    padding: 8,
+  },
+  emptyContainer: {
+    paddingVertical: 32,
+    alignItems: "center",
+    gap: 8,
+  },
+  emptyText: {
+    color: "#333",
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  emptySubText: {
+    color: "#222",
+    fontSize: 12,
+    textAlign: "center",
+    lineHeight: 18,
   },
 });
