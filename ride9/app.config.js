@@ -1,16 +1,16 @@
 export default {
   expo: {
-    name: "ride9",
-    slug: "ride9",
+    name: "Crew",
+    slug: "crew",
     version: "1.0.0",
     orientation: "portrait",
     icon: "./assets/images/icon.png",
-    scheme: "ride9",
+    scheme: "crew",
     userInterfaceStyle: "automatic",
     newArchEnabled: true,
     ios: {
       supportsTablet: true,
-      bundleIdentifier: "com.anonymous.ride9",
+      bundleIdentifier: "com.tianxiangren.crew",
     },
     android: {
       adaptiveIcon: {
@@ -21,7 +21,7 @@ export default {
       },
       edgeToEdgeEnabled: true,
       predictiveBackGestureEnabled: false,
-      package: "com.anonymous.ride9",
+      package: "com.tianxiangren.crew",
     },
     web: {
       output: "static",
@@ -64,7 +64,7 @@ export default {
         projectId: "a4738417-b6e7-402d-9727-cb434f831145",
       },
     },
-    owner: "ride9",
-    slug: "ride-9",
+    owner: "rentxiang",
+    slug: "crew",
   },
 };
