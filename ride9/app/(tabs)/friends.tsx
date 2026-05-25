@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { useRouter } from "expo-router";
+import { useEffect, useState, useCallback } from "react";
+import { useRouter, useFocusEffect } from "expo-router";
 import { supabase } from "../../services/supabase";
 import {
   View,
@@ -138,6 +138,14 @@ export default function Friends() {
     }, 350);
   };
 
+  // Refresh friend profiles every time the crew tab comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      if (!user) return;
+      fetchFriends(user.id);
+    }, [user])
+  );
+
   useEffect(() => {
     if (!user) return;
     const channel = supabase
@@ -150,6 +158,20 @@ export default function Friends() {
       .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [user]);
+
+  // Refresh list when a friend updates their profile
+  useEffect(() => {
+    if (!user || friends.length === 0) return;
+    const ids = new Set(friends.map((f) => f.friend_id));
+    const channel = supabase
+      .channel("friends-page-user-changes")
+      .on("postgres_changes",
+        { event: "UPDATE", schema: "public", table: "users" },
+        (payload) => { if (ids.has((payload.new as any).id)) fetchFriends(user.id); }
+      )
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [user, friends]);
 
   if (loading) {
     return (

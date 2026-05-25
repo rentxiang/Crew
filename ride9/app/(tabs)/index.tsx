@@ -1,5 +1,6 @@
 import Mapbox, { Camera, LocationPuck, MapView } from "@rnmapbox/maps";
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
+import { useFocusEffect } from "expo-router";
 import { Animated, StyleSheet, TouchableOpacity, View, Text } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as Location from "expo-location";
@@ -36,6 +37,8 @@ export default function MapScreen() {
   const [followMode, setFollowMode] = useState(false);
   const [selectedRiderId, setSelectedRiderId] = useState<string | null>(null);
   const cameraRef = useRef<Camera>(null);
+  const prevFriendIdsRef = useRef<string>("");
+  const selectedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Toast animation (slides down from above)
   const toastOpacity = useRef(new Animated.Value(0)).current;
@@ -107,9 +110,22 @@ export default function MapScreen() {
     return () => sub?.subscription.unsubscribe();
   }, []);
 
-  // Refetch locations whenever friends list changes (catches new friends immediately)
+  // Refresh profiles every time the map tab comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      if (!authUser) return;
+      getProfile(authUser.id).then((p) => { if (p) setSelfProfile(p); });
+      loadFriends(authUser.id);
+    }, [authUser])
+  );
+
+  // Refetch locations only when the set of friend IDs changes (not on profile-only refreshes)
   useEffect(() => {
-    if (!authUser || friends.length === 0) return;
+    if (!authUser) return;
+    const ids = friends.map((f) => f.user_id).sort().join(",");
+    if (ids === prevFriendIdsRef.current) return;
+    prevFriendIdsRef.current = ids;
+    if (friends.length === 0) { setLocations([]); return; }
     getFriendLocations(authUser.id).then((data) => setLocations(data || []));
   }, [friends]);
 
@@ -195,6 +211,33 @@ export default function MapScreen() {
     return () => { supabase.removeChannel(channel); };
   }, [authUser]);
 
+  // Update selfProfile immediately when own profile changes
+  useEffect(() => {
+    if (!authUser) return;
+    const channel = supabase
+      .channel("self-profile-live")
+      .on("postgres_changes",
+        { event: "UPDATE", schema: "public", table: "users", filter: `id=eq.${authUser.id}` },
+        (payload) => setSelfProfile(payload.new as any)
+      )
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [authUser]);
+
+  // Reload friend markers when any friend's profile changes
+  useEffect(() => {
+    if (!authUser || friends.length === 0) return;
+    const ids = new Set(friends.map((f) => f.user_id));
+    const channel = supabase
+      .channel("friend-profiles-live")
+      .on("postgres_changes",
+        { event: "UPDATE", schema: "public", table: "users" },
+        (payload) => { if (ids.has((payload.new as any).id)) loadFriends(authUser.id); }
+      )
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [authUser, friends]);
+
   // Single persistent location subscription — subscribe once, filter in callback
   useEffect(() => {
     if (!authUser) return;
@@ -244,7 +287,11 @@ export default function MapScreen() {
   useEffect(() => {
     if (!focusCoords || !cameraRef.current) return;
     setFollowMode(false);
-    cameraRef.current.flyTo([focusCoords.longitude, focusCoords.latitude], 800);
+    cameraRef.current.setCamera({
+      centerCoordinate: [focusCoords.longitude, focusCoords.latitude],
+      zoomLevel: 13,
+      animationDuration: 800,
+    });
     setFocusCoords(null);
   }, [focusCoords]);
 
@@ -326,7 +373,10 @@ export default function MapScreen() {
         style={styles.map}
         styleURL="mapbox://styles/mapbox/dark-v11"
         onCameraChanged={(e) => setZoomLevel(e.properties.zoom)}
-        onPress={() => setSelectedRiderId(null)}
+        onPress={() => {
+          if (selectedTimerRef.current) clearTimeout(selectedTimerRef.current);
+          setSelectedRiderId(null);
+        }}
       >
         <Camera
           ref={cameraRef}
@@ -349,9 +399,15 @@ export default function MapScreen() {
             showLabel={zoomLevel >= 13}
             selected={selectedRiderId === r.user_id}
             onPress={() => {
+              if (selectedTimerRef.current) clearTimeout(selectedTimerRef.current);
               setSelectedRiderId(r.user_id);
               setFollowMode(false);
-              cameraRef.current?.flyTo([r.longitude, r.latitude], 600);
+              cameraRef.current?.setCamera({
+                centerCoordinate: [r.longitude, r.latitude],
+                zoomLevel: 13,
+                animationDuration: 600,
+              });
+              selectedTimerRef.current = setTimeout(() => setSelectedRiderId(null), 4000);
             }}
           />
         ))}

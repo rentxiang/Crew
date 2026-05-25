@@ -73,6 +73,7 @@ export default function RiderMarker({ rider, showLabel = true, selected = false,
       id={`rider-${rider.user_id}`}
       coordinate={displayCoords}
       allowOverlap={true}
+      allowOverlapWithPuck={true}
     >
       <TouchableOpacity
         onPress={onPress}
@@ -103,9 +104,9 @@ export default function RiderMarker({ rider, showLabel = true, selected = false,
           <Text style={[styles.name, isStale && !selected && styles.nameStale]}>
             {rider.name}
           </Text>
-          {selected && isStale && showLabel ? (
+          {selected && isStale ? (
             <Text style={styles.lastSeen}>{lastSeen}</Text>
-          ) : !isStale && showLabel && rider.bike ? (
+          ) : (showLabel || selected) && !isStale && rider.bike ? (
             <Text style={styles.bike}>{rider.bike}</Text>
           ) : null}
         </View>
