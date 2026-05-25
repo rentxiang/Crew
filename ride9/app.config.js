@@ -11,6 +11,9 @@ export default {
     ios: {
       supportsTablet: true,
       bundleIdentifier: "com.tianxiangren.crew",
+      infoPlist: {
+        UIBackgroundModes: ["location"],
+      },
     },
     android: {
       adaptiveIcon: {
@@ -38,7 +41,9 @@ export default {
       [
         "expo-location",
         {
-          locationWhenInUsePermission: "Show current location on map.",
+          locationWhenInUsePermission: "Crew shows your location on the map while the app is open.",
+          locationAlwaysAndWhenInUsePermission: "Crew shares your location with your riding group, including when the screen is locked.",
+          isIosBackgroundLocationEnabled: true,
         },
       ],
       "expo-router",

@@ -246,6 +246,7 @@ export default function MapScreen() {
       latitude: loc?.lat,
       longitude: loc?.lng,
       is_sharing: loc?.is_sharing ?? false,
+      updated_at: loc?.updated_at,
     };
   }).filter((r) => r.is_sharing && r.latitude && r.longitude);
 
