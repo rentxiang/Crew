@@ -39,6 +39,7 @@ export default function MapScreen() {
   const cameraRef = useRef<Camera>(null);
   const prevFriendIdsRef = useRef<string>("");
   const selectedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastMapInteractionRef = useRef<number>(0);
 
   // Toast animation (slides down from above)
   const toastOpacity = useRef(new Animated.Value(0)).current;
@@ -179,6 +180,22 @@ export default function MapScreen() {
 
     return () => clearInterval(interval);
   }, [isSharing]);
+
+  // Follow mode: recenter on user, but wait 3s after last map interaction
+  useEffect(() => {
+    if (!followMode) return;
+    const interval = setInterval(() => {
+      const idle = Date.now() - lastMapInteractionRef.current >= 2000;
+      if (idle && coordsRef.current && cameraRef.current) {
+        cameraRef.current.setCamera({
+          centerCoordinate: [coordsRef.current.longitude, coordsRef.current.latitude],
+          zoomLevel: 17,
+          animationDuration: 800,
+        });
+      }
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [followMode]);
 
   // Track own coords for self marker
   useEffect(() => {
@@ -322,10 +339,6 @@ export default function MapScreen() {
   const activeCount = allRiders.length;
 
   const centerOnUser = async () => {
-    if (followMode) {
-      setFollowMode(false);
-      await new Promise<void>((r) => setTimeout(r, 50));
-    }
     if (!cameraRef.current) return;
 
     if (coordsRef.current) {
@@ -373,6 +386,7 @@ export default function MapScreen() {
         style={styles.map}
         styleURL="mapbox://styles/mapbox/dark-v11"
         onCameraChanged={(e) => setZoomLevel(e.properties.zoom)}
+        onTouchStart={() => { lastMapInteractionRef.current = Date.now(); }}
         onPress={() => {
           if (selectedTimerRef.current) clearTimeout(selectedTimerRef.current);
           setSelectedRiderId(null);
@@ -381,8 +395,6 @@ export default function MapScreen() {
         <Camera
           ref={cameraRef}
           zoomLevel={15}
-          followUserLocation={followMode}
-          followZoomLevel={15}
           animationMode="flyTo"
         />
         {(!isSharing || !selfCoords) && (
@@ -456,7 +468,18 @@ export default function MapScreen() {
 
         <TouchableOpacity
           style={[styles.iconButton, followMode && styles.iconButtonFollow]}
-          onPress={() => setFollowMode((v) => !v)}
+          onPress={() => {
+            const next = !followMode;
+            setFollowMode(next);
+            if (next && coordsRef.current && cameraRef.current) {
+              lastMapInteractionRef.current = 0;
+              cameraRef.current.setCamera({
+                centerCoordinate: [coordsRef.current.longitude, coordsRef.current.latitude],
+                zoomLevel: 17,
+                animationDuration: 700,
+              });
+            }
+          }}
           activeOpacity={0.8}
         >
           <Ionicons

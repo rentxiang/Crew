@@ -64,9 +64,15 @@ export default {
       typedRoutes: true,
       reactCompiler: true,
     },
+    updates: {
+      url: "https://u.expo.dev/25ac9531-0cd3-4676-ad46-dcc3e5f3a126",
+    },
+    runtimeVersion: {
+      policy: "appVersion",
+    },
     extra: {
       eas: {
-        projectId: "a4738417-b6e7-402d-9727-cb434f831145",
+        projectId: "25ac9531-0cd3-4676-ad46-dcc3e5f3a126",
       },
     },
     owner: "rentxiang",
