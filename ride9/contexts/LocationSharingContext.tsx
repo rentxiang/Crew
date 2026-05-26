@@ -1,8 +1,8 @@
 import { createContext, useContext, useRef, useState, useEffect, ReactNode } from "react";
-import { Alert, Linking } from "react-native";
+import { Alert, Linking, AppState } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Location from "expo-location";
-import { startLocationTracking, updateSharingStatus } from "../services/location";
+import { startLocationTracking, updateSharingStatus, updateLocation } from "../services/location";
 import { supabase } from "../services/supabase";
 import { Room } from "../services/rooms";
 
@@ -115,6 +115,33 @@ export function LocationSharingProvider({ children }: { children: ReactNode }) {
       }
     };
     reconcile();
+  }, []);
+
+  // When returning to foreground while sharing, push a fresh location so friends
+  // see us active again — watchPositionAsync won't fire if we haven't moved 20m.
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", async (state) => {
+      if (state !== "active" || !stopRef.current || !userIdRef.current) return;
+      try {
+        const loc = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Balanced,
+        });
+        coordsRef.current = {
+          latitude: loc.coords.latitude,
+          longitude: loc.coords.longitude,
+        };
+        await updateLocation(userIdRef.current, loc.coords.latitude, loc.coords.longitude);
+      } catch {
+        if (coordsRef.current) {
+          await updateLocation(
+            userIdRef.current,
+            coordsRef.current.latitude,
+            coordsRef.current.longitude
+          );
+        }
+      }
+    });
+    return () => sub.remove();
   }, []);
 
   // Cleanup on unmount

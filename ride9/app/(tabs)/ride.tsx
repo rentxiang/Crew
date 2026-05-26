@@ -472,7 +472,7 @@ const styles = StyleSheet.create({
     width: 10,
     height: 10,
     borderRadius: 5,
-    backgroundColor: "#00ff88",
+    backgroundColor: "#ffa726",
   },
   memberDotMe: {
     backgroundColor: "#ff4500",

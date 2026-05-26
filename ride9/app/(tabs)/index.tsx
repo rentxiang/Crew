@@ -1,7 +1,7 @@
 import Mapbox, { Camera, LocationPuck, MapView } from "@rnmapbox/maps";
 import { useEffect, useState, useRef, useCallback } from "react";
 import { useFocusEffect } from "expo-router";
-import { Animated, StyleSheet, TouchableOpacity, View, Text, Alert } from "react-native";
+import { Animated, StyleSheet, TouchableOpacity, View, Text } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as Location from "expo-location";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -366,16 +366,13 @@ export default function MapScreen() {
     });
   };
 
-  const playVoice = async (rider: any) => {
-    const msg = voiceMessages[rider.user_id];
+  const playVoice = async (voiceUserId: string, selectionKey: string) => {
+    const msg = voiceMessages[voiceUserId];
     if (!msg) return;
-    const isOther = rider.user_id !== authUser?.id;
-    if (isOther) markVoicePlayed(rider.user_id, msg.created_at);
+    if (voiceUserId !== authUser?.id) markVoicePlayed(voiceUserId, msg.created_at);
     // Keep the bubble open for the whole clip instead of the 4s auto-dismiss
-    if (isOther) {
-      if (selectedTimerRef.current) clearTimeout(selectedTimerRef.current);
-      setSelectedRiderId(rider.user_id);
-    }
+    if (selectedTimerRef.current) clearTimeout(selectedTimerRef.current);
+    setSelectedRiderId(selectionKey);
     try {
       voicePlayerRef.current?.remove?.();
       voicePlayerRef.current = null;
@@ -384,17 +381,15 @@ export default function MapScreen() {
       await setAudioModeAsync({ playsInSilentMode: true });
       const player = createAudioPlayer({ uri: url });
       voicePlayerRef.current = player;
-      setPlayingUserId(rider.user_id);
+      setPlayingUserId(voiceUserId);
       player.addListener("playbackStatusUpdate", (status: any) => {
         if (status?.didJustFinish) {
           setPlayingUserId(null);
           player.remove();
           if (voicePlayerRef.current === player) voicePlayerRef.current = null;
           // collapse the bubble shortly after the clip ends
-          if (isOther) {
-            if (selectedTimerRef.current) clearTimeout(selectedTimerRef.current);
-            selectedTimerRef.current = setTimeout(() => setSelectedRiderId(null), 1500);
-          }
+          if (selectedTimerRef.current) clearTimeout(selectedTimerRef.current);
+          selectedTimerRef.current = setTimeout(() => setSelectedRiderId(null), 1500);
         }
       });
       player.play();
@@ -403,24 +398,15 @@ export default function MapScreen() {
     }
   };
 
-  const handleSelfVoiceTap = () => {
-    if (!authUser || !voiceMessages[authUser.id]) return;
-    Alert.alert("Your voice message", "Your crew can hear this for 24 hours.", [
-      { text: "Play", onPress: () => playVoice({ user_id: authUser.id }) },
-      {
-        text: "Delete",
-        style: "destructive",
-        onPress: async () => {
-          await deleteOwnVoiceMessage(authUser.id);
-          setVoiceMessages((prev) => {
-            const next = { ...prev };
-            delete next[authUser.id];
-            return next;
-          });
-        },
-      },
-      { text: "Cancel", style: "cancel" },
-    ]);
+  const deleteSelfVoice = async () => {
+    if (!authUser) return;
+    await deleteOwnVoiceMessage(authUser.id);
+    setVoiceMessages((prev) => {
+      const next = { ...prev };
+      delete next[authUser.id];
+      return next;
+    });
+    setSelectedRiderId(null);
   };
 
   // Fly to a friend tapped from the crew tab
@@ -541,7 +527,7 @@ export default function MapScreen() {
             selected={selectedRiderId === r.user_id}
             voicePlaying={playingUserId === r.user_id}
             voiceRead={!!r.voice && playedVoices.has(`${r.user_id}:${r.voice.created_at}`)}
-            onPlayVoice={() => playVoice(r)}
+            onPlayVoice={() => playVoice(r.user_id, r.user_id)}
             onPress={() => {
               if (selectedTimerRef.current) clearTimeout(selectedTimerRef.current);
               setSelectedRiderId(r.user_id);
@@ -568,8 +554,15 @@ export default function MapScreen() {
               voice: voiceMessages[authUser?.id] ?? null,
             }}
             showLabel={zoomLevel >= 13}
+            selected={selectedRiderId === `self-${authUser?.id}`}
             voicePlaying={playingUserId === authUser?.id}
-            onPlayVoice={handleSelfVoiceTap}
+            onPlayVoice={() => playVoice(authUser!.id, `self-${authUser?.id}`)}
+            onDeleteVoice={deleteSelfVoice}
+            onPress={() => {
+              if (selectedTimerRef.current) clearTimeout(selectedTimerRef.current);
+              setSelectedRiderId(`self-${authUser?.id}`);
+              selectedTimerRef.current = setTimeout(() => setSelectedRiderId(null), 4000);
+            }}
           />
         )}
       </MapView>

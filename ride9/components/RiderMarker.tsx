@@ -18,6 +18,7 @@ interface Props {
   voicePlaying?: boolean;
   voiceRead?: boolean;
   onPlayVoice?: () => void;
+  onDeleteVoice?: () => void;
   onPress?: () => void;
 }
 
@@ -28,6 +29,7 @@ export default function RiderMarker({
   voicePlaying = false,
   voiceRead = false,
   onPlayVoice,
+  onDeleteVoice,
   onPress,
 }: Props) {
   const glowScale = useRef(new Animated.Value(1)).current;
@@ -119,7 +121,10 @@ export default function RiderMarker({
       >
         {hasVoice && selected && (
           <Animated.View
-            style={{ opacity: bubbleAnim, transform: [{ scale: bubbleAnim }] }}
+            style={[
+              styles.voiceExpandRow,
+              { opacity: bubbleAnim, transform: [{ scale: bubbleAnim }] },
+            ]}
           >
             <TouchableOpacity
               style={[
@@ -139,6 +144,15 @@ export default function RiderMarker({
                 {Math.max(1, Math.round(rider.voice.duration ?? 1))}&quot;
               </Text>
             </TouchableOpacity>
+            {onDeleteVoice && (
+              <TouchableOpacity
+                style={styles.voiceDeleteBubble}
+                onPress={onDeleteVoice}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="trash" size={12} color="#ff5a52" />
+              </TouchableOpacity>
+            )}
           </Animated.View>
         )}
         <View style={styles.avatarWrapper}>
@@ -202,6 +216,12 @@ const styles = StyleSheet.create({
     shadowRadius: 2,
     shadowOffset: { width: 0, height: 1 },
   },
+  voiceExpandRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginBottom: 4,
+  },
   voiceBubble: {
     flexDirection: "row",
     alignItems: "center",
@@ -210,12 +230,21 @@ const styles = StyleSheet.create({
     paddingHorizontal: 9,
     paddingVertical: 5,
     borderRadius: 12,
-    marginBottom: 4,
     borderWidth: 2,
     borderColor: "#080808",
   },
   voiceBubbleActive: {
     backgroundColor: "#007aff",
+  },
+  voiceDeleteBubble: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: "#1e1e1e",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 2,
+    borderColor: "#080808",
   },
   voiceRead: {
     backgroundColor: "#3a3a3a",
