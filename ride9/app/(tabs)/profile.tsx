@@ -89,7 +89,7 @@ export default function ProfileScreen() {
         text: "Sign Out",
         style: "destructive",
         onPress: async () => {
-          stopSharing();
+          await stopSharing();
           await supabase.auth.signOut();
         },
       },

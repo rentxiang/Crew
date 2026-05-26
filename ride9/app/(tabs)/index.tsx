@@ -364,7 +364,7 @@ export default function MapScreen() {
   const toggleSharing = async () => {
     pulseButton();
     if (isSharing) {
-      stopSharing();
+      await stopSharing();
       showToast({
         message: "Location sharing off",
         sub: "Your crew can no longer see you",

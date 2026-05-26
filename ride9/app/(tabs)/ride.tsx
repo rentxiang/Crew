@@ -105,7 +105,7 @@ export default function RideScreen() {
           if (!currentRoom) return;
           await deleteRoom(currentRoom.id);
           setCurrentRoom(null);
-          stopSharing();
+          await stopSharing();
         },
       },
     ]);
@@ -121,7 +121,7 @@ export default function RideScreen() {
           if (!currentRoom || !authUser) return;
           await leaveRoom(currentRoom.id, authUser.id);
           setCurrentRoom(null);
-          stopSharing();
+          await stopSharing();
         },
       },
     ]);

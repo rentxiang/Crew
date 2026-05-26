@@ -1,39 +1,64 @@
 import * as Location from "expo-location";
+import * as TaskManager from "expo-task-manager";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { supabase } from "./supabase";
 
+const LOCATION_TASK = "crew-background-location";
+const USER_ID_KEY = "@crew/tracking_user_id";
+
+// Must be defined at module top level — runs when app is backgrounded/suspended
+TaskManager.defineTask(LOCATION_TASK, async ({ data, error }: any) => {
+  if (error || !data?.locations?.length) return;
+  const userId = await AsyncStorage.getItem(USER_ID_KEY);
+  if (!userId) return;
+  const { latitude, longitude } = data.locations[0].coords;
+  await updateLocation(userId, latitude, longitude);
+});
+
 export async function startLocationTracking(
-  callback: (coords: { latitude: number; longitude: number }) => void
-): Promise<Location.LocationSubscription | null> {
-  const { status } = await Location.requestForegroundPermissionsAsync();
+  userId: string,
+  onUpdate: (coords: { latitude: number; longitude: number }) => void
+): Promise<() => Promise<void>> {
+  const { status: fgStatus } = await Location.requestForegroundPermissionsAsync();
+  if (fgStatus !== "granted") return async () => {};
 
-  if (status !== "granted") {
-    console.error("Location permission not granted.");
-    return null;
+  // Request "Always Allow" — needed for background tracking
+  await Location.requestBackgroundPermissionsAsync();
+
+  await AsyncStorage.setItem(USER_ID_KEY, userId);
+
+  // Foreground subscription — keeps UI (map/coordsRef) in sync
+  const fgSub = await Location.watchPositionAsync(
+    { accuracy: Location.Accuracy.BestForNavigation, distanceInterval: 20 },
+    (loc) => {
+      onUpdate(loc.coords);
+      updateLocation(userId, loc.coords.latitude, loc.coords.longitude);
+    }
+  );
+
+  // Background task — keeps updating Supabase when app is suspended
+  const alreadyRunning = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK).catch(() => false);
+  if (!alreadyRunning) {
+    await Location.startLocationUpdatesAsync(LOCATION_TASK, {
+      accuracy: Location.Accuracy.Balanced,
+      distanceInterval: 30,
+      showsBackgroundLocationIndicator: true,
+    });
   }
 
-  try {
-    const subscription = await Location.watchPositionAsync(
-      {
-        accuracy: Location.Accuracy.BestForNavigation,
-        distanceInterval: 20,
-      },
-      (location) => {
-        callback(location.coords);
-      }
-    );
-
-    return subscription;
-  } catch (error) {
-    console.error("Failed to start location tracking:", error);
-    return null;
-  }
+  return async () => {
+    fgSub.remove();
+    await AsyncStorage.removeItem(USER_ID_KEY);
+    const running = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK).catch(() => false);
+    if (running) await Location.stopLocationUpdatesAsync(LOCATION_TASK);
+  };
 }
 
 export async function updateLocation(userId: string, lat: number, lng: number) {
   const { error } = await supabase
     .from("locations")
     .upsert(
-      { user_id: userId, lat, lng, is_sharing: true, updated_at: new Date() },
+      { user_id: userId, lat, lng, is_sharing: true },
       { onConflict: "user_id" }
     );
 
@@ -43,7 +68,7 @@ export async function updateLocation(userId: string, lat: number, lng: number) {
 export async function updateSharingStatus(userId: string, isSharing: boolean) {
   await supabase
     .from("locations")
-    .update({ is_sharing: isSharing, updated_at: new Date() })
+    .update({ is_sharing: isSharing })
     .eq("user_id", userId);
 }
 

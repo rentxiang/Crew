@@ -1,9 +1,50 @@
 import { Tabs } from "expo-router";
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { Ionicons } from "@expo/vector-icons";
 import { HapticTab } from "@/components/haptic-tab";
+import { supabase } from "@/services/supabase";
 
 export default function TabLayout() {
+  const [pendingCount, setPendingCount] = useState(0);
+  const [userId, setUserId] = useState<string | null>(null);
+
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => {
+      if (data?.user) setUserId(data.user.id);
+    });
+    const { data: sub } = supabase.auth.onAuthStateChange((_, session) => {
+      setUserId(session?.user?.id ?? null);
+    });
+    return () => sub.subscription.unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (!userId) { setPendingCount(0); return; }
+
+    const fetchCount = async () => {
+      const { count } = await supabase
+        .from("friends")
+        .select("id", { count: "exact", head: true })
+        .eq("friend_id", userId)
+        .eq("status", "pending");
+      setPendingCount(count ?? 0);
+    };
+
+    fetchCount();
+
+    const channel = supabase
+      .channel("pending-badge")
+      .on("postgres_changes", {
+        event: "*",
+        schema: "public",
+        table: "friends",
+        filter: `friend_id=eq.${userId}`,
+      }, fetchCount)
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, [userId]);
+
   return (
     <Tabs
       screenOptions={{
@@ -45,6 +86,7 @@ export default function TabLayout() {
         name="friends"
         options={{
           title: "CREW",
+          tabBarBadge: pendingCount > 0 ? pendingCount : undefined,
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="people" size={size} color={color} />
           ),
