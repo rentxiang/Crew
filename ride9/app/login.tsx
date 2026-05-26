@@ -154,7 +154,7 @@ export default function Login() {
         <Text style={styles.subtitle}>live group ride tracking</Text>
 
         <View style={styles.socialRow}>
-          {/* Apple Sign In — re-enable once Apple Developer Program ($99) is active
+          {/* Apple Sign In — re-enable once local signing / paid team is sorted out
           <AppleAuthentication.AppleAuthenticationButton
             buttonType={AppleAuthentication.AppleAuthenticationButtonType.SIGN_IN}
             buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.WHITE}

@@ -16,6 +16,7 @@ interface Props {
   showLabel?: boolean;
   selected?: boolean;
   voicePlaying?: boolean;
+  voiceRead?: boolean;
   onPlayVoice?: () => void;
   onPress?: () => void;
 }
@@ -25,11 +26,15 @@ export default function RiderMarker({
   showLabel = true,
   selected = false,
   voicePlaying = false,
+  voiceRead = false,
   onPlayVoice,
   onPress,
 }: Props) {
   const glowScale = useRef(new Animated.Value(1)).current;
   const glowOpacity = useRef(new Animated.Value(0.18)).current;
+  const bubbleAnim = useRef(new Animated.Value(0)).current;
+
+  const hasVoice = !!rider.voice;
 
   const animCoords = useRef(
     new Animated.ValueXY({ x: rider.longitude, y: rider.latitude })
@@ -51,6 +56,19 @@ export default function RiderMarker({
       useNativeDriver: false,
     }).start();
   }, [rider.latitude, rider.longitude]);
+
+  // Voice bubble expands smoothly when the rider is selected
+  useEffect(() => {
+    if (selected && hasVoice) {
+      bubbleAnim.setValue(0);
+      Animated.spring(bubbleAnim, {
+        toValue: 1,
+        friction: 6,
+        tension: 90,
+        useNativeDriver: true,
+      }).start();
+    }
+  }, [selected, hasVoice]);
 
   const lastSeen = getLastSeenText(rider.updated_at);
   const isStale = lastSeen !== null;
@@ -99,21 +117,29 @@ export default function RiderMarker({
         activeOpacity={onPress ? 0.75 : 1}
         style={styles.container}
       >
-        {rider.voice && (
-          <TouchableOpacity
-            style={[styles.voiceBubble, voicePlaying && styles.voiceBubbleActive]}
-            onPress={onPlayVoice}
-            activeOpacity={0.7}
+        {hasVoice && selected && (
+          <Animated.View
+            style={{ opacity: bubbleAnim, transform: [{ scale: bubbleAnim }] }}
           >
-            <Ionicons
-              name={voicePlaying ? "volume-high" : "play"}
-              size={11}
-              color="#fff"
-            />
-            <Text style={styles.voiceDur}>
-              {Math.max(1, Math.round(rider.voice.duration ?? 1))}&quot;
-            </Text>
-          </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.voiceBubble,
+                voiceRead && styles.voiceRead,
+                voicePlaying && styles.voiceBubbleActive,
+              ]}
+              onPress={onPlayVoice}
+              activeOpacity={0.7}
+            >
+              <Ionicons
+                name={voicePlaying ? "volume-high" : "play"}
+                size={11}
+                color="#fff"
+              />
+              <Text style={styles.voiceDur}>
+                {Math.max(1, Math.round(rider.voice.duration ?? 1))}&quot;
+              </Text>
+            </TouchableOpacity>
+          </Animated.View>
         )}
         <View style={styles.avatarWrapper}>
           <Animated.View
@@ -134,6 +160,11 @@ export default function RiderMarker({
               isStale && styles.avatarStale,
             ]}
           />
+          {hasVoice && !selected && (
+            <View style={[styles.voiceBadge, voiceRead && styles.voiceRead]}>
+              <Ionicons name="mic" size={10} color={voiceRead ? "#999" : "#fff"} />
+            </View>
+          )}
         </View>
         <View style={[styles.label, isStale && !selected && styles.labelStale]}>
           <Text style={[styles.name, isStale && !selected && styles.nameStale]}>
@@ -154,6 +185,23 @@ const styles = StyleSheet.create({
   container: {
     alignItems: "center",
   },
+  voiceBadge: {
+    position: "absolute",
+    top: -3,
+    right: -3,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: "#ff4500",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 2,
+    borderColor: "#080808",
+    shadowColor: "#000",
+    shadowOpacity: 0.35,
+    shadowRadius: 2,
+    shadowOffset: { width: 0, height: 1 },
+  },
   voiceBubble: {
     flexDirection: "row",
     alignItems: "center",
@@ -168,6 +216,9 @@ const styles = StyleSheet.create({
   },
   voiceBubbleActive: {
     backgroundColor: "#007aff",
+  },
+  voiceRead: {
+    backgroundColor: "#3a3a3a",
   },
   voiceDur: {
     color: "#fff",

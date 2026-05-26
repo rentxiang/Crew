@@ -4,6 +4,7 @@ import { useFocusEffect } from "expo-router";
 import { Animated, StyleSheet, TouchableOpacity, View, Text, Alert } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as Location from "expo-location";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { supabase } from "@/services/supabase";
 import RiderMarker from "../../components/RiderMarker";
 import { getFriendLocations } from "../../services/location";
@@ -41,6 +42,7 @@ export default function MapScreen() {
   const [selectedRiderId, setSelectedRiderId] = useState<string | null>(null);
   const [voiceMessages, setVoiceMessages] = useState<Record<string, VoiceMessage>>({});
   const [playingUserId, setPlayingUserId] = useState<string | null>(null);
+  const [playedVoices, setPlayedVoices] = useState<Set<string>>(new Set());
   const voicePlayerRef = useRef<any>(null);
   const cameraRef = useRef<Camera>(null);
   const prevFriendIdsRef = useRef<string>("");
@@ -346,9 +348,34 @@ export default function MapScreen() {
     return () => { voicePlayerRef.current?.remove?.(); };
   }, []);
 
+  // Load locally-stored "read" voice keys
+  useEffect(() => {
+    AsyncStorage.getItem("@crew/played_voices").then((raw) => {
+      if (raw) setPlayedVoices(new Set(JSON.parse(raw)));
+    });
+  }, []);
+
+  const markVoicePlayed = (userId: string, createdAt: string) => {
+    const key = `${userId}:${createdAt}`;
+    setPlayedVoices((prev) => {
+      if (prev.has(key)) return prev;
+      const next = new Set(prev);
+      next.add(key);
+      AsyncStorage.setItem("@crew/played_voices", JSON.stringify([...next]));
+      return next;
+    });
+  };
+
   const playVoice = async (rider: any) => {
     const msg = voiceMessages[rider.user_id];
     if (!msg) return;
+    const isOther = rider.user_id !== authUser?.id;
+    if (isOther) markVoicePlayed(rider.user_id, msg.created_at);
+    // Keep the bubble open for the whole clip instead of the 4s auto-dismiss
+    if (isOther) {
+      if (selectedTimerRef.current) clearTimeout(selectedTimerRef.current);
+      setSelectedRiderId(rider.user_id);
+    }
     try {
       voicePlayerRef.current?.remove?.();
       voicePlayerRef.current = null;
@@ -363,6 +390,11 @@ export default function MapScreen() {
           setPlayingUserId(null);
           player.remove();
           if (voicePlayerRef.current === player) voicePlayerRef.current = null;
+          // collapse the bubble shortly after the clip ends
+          if (isOther) {
+            if (selectedTimerRef.current) clearTimeout(selectedTimerRef.current);
+            selectedTimerRef.current = setTimeout(() => setSelectedRiderId(null), 1500);
+          }
         }
       });
       player.play();
@@ -508,6 +540,7 @@ export default function MapScreen() {
             showLabel={zoomLevel >= 13}
             selected={selectedRiderId === r.user_id}
             voicePlaying={playingUserId === r.user_id}
+            voiceRead={!!r.voice && playedVoices.has(`${r.user_id}:${r.voice.created_at}`)}
             onPlayVoice={() => playVoice(r)}
             onPress={() => {
               if (selectedTimerRef.current) clearTimeout(selectedTimerRef.current);
