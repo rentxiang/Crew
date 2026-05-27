@@ -128,7 +128,7 @@ export default function MapScreen() {
       if (!authUser) return;
       getProfile(authUser.id).then((p) => { if (p) setSelfProfile(p); });
       loadFriends(authUser.id);
-      if (currentRoom) getRoute(currentRoom.id).then((r) => r && setRoomRoute(r));
+      if (currentRoom) getRoute(currentRoom.id).then(setRoomRoute).catch(() => {});
     }, [authUser, currentRoom?.id])
   );
 
@@ -317,9 +317,11 @@ export default function MapScreen() {
     if (!currentRoom) { setRoomRoute(null); return; }
     const roomId = currentRoom.id;
     const load = async () => {
-      const r = await getRoute(roomId);
-      // Keep the existing route on a transient null; only realtime DELETE clears it
-      setRoomRoute((prev) => (r === null && prev ? prev : r));
+      try {
+        setRoomRoute(await getRoute(roomId)); // null = genuinely cleared
+      } catch {
+        /* transient error — keep current route */
+      }
     };
     load();
     const channel = subscribeRoute(roomId, (payload: any) => {
@@ -331,7 +333,7 @@ export default function MapScreen() {
 
   // Re-fetch the route when it's toggled back on (recovers from any stale state)
   useEffect(() => {
-    if (showRoute && currentRoom) getRoute(currentRoom.id).then((r) => r && setRoomRoute(r));
+    if (showRoute && currentRoom) getRoute(currentRoom.id).then(setRoomRoute).catch(() => {});
   }, [showRoute]);
 
   const openInMaps = (w: Waypoint) => {

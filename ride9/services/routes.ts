@@ -15,6 +15,8 @@ export type RoomRoute = {
 
 const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_KEY || "";
 
+// Returns null when there is genuinely no route (cleared); throws on a real error
+// so callers can keep the existing route through transient network failures.
 export async function getRoute(roomId: string): Promise<RoomRoute | null> {
   const { data, error } = await supabase
     .from("room_routes")
@@ -22,10 +24,7 @@ export async function getRoute(roomId: string): Promise<RoomRoute | null> {
     .eq("room_id", roomId)
     .maybeSingle();
 
-  if (error) {
-    console.error("Failed to fetch route:", error.message);
-    return null;
-  }
+  if (error) throw new Error(error.message);
   return (data as RoomRoute) ?? null;
 }
 

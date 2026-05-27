@@ -84,8 +84,11 @@ export default function RideScreen() {
 
   const loadRoute = async () => {
     if (!currentRoom) return;
-    const data = await getRoute(currentRoom.id);
-    setRoute(data);
+    try {
+      setRoute(await getRoute(currentRoom.id));
+    } catch {
+      /* transient error — keep current route */
+    }
   };
 
   const handleStartRide = async () => {
