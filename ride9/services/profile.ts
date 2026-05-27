@@ -36,3 +36,11 @@ export async function updateProfile(
 export function avatarUrl(seed: string | null, email: string): string {
   return `https://api.dicebear.com/7.x/adventurer/png?seed=${seed ?? email}`;
 }
+
+export async function deleteAccount(userId: string): Promise<void> {
+  // Remove own voice file (storage isn't covered by the SQL function)
+  await supabase.storage.from("voice-messages").remove([`${userId}/voice.m4a`]);
+  const { error } = await supabase.rpc("delete_user");
+  if (error) throw new Error(error.message);
+  await supabase.auth.signOut();
+}

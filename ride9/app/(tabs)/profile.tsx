@@ -9,11 +9,15 @@ import {
   Image,
   Alert,
   ActivityIndicator,
+  Linking,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { supabase } from "../../services/supabase";
-import { getProfile, updateProfile, avatarUrl, UserProfile } from "../../services/profile";
+import { getProfile, updateProfile, avatarUrl, deleteAccount, UserProfile } from "../../services/profile";
 import { useLocationSharing } from "../../contexts/LocationSharingContext";
+
+// TODO: replace with your hosted PRIVACY.md URL (e.g. GitHub Pages / Notion public page)
+const PRIVACY_URL = "https://tianxiangren.github.io/crew-privacy/";
 
 const AVATAR_SEEDS = [
   "canyon", "nightrider", "apex", "throttle",
@@ -94,6 +98,39 @@ export default function ProfileScreen() {
         },
       },
     ]);
+  };
+
+  const handleDeleteAccount = () => {
+    Alert.alert(
+      "Delete Account",
+      "This permanently deletes your account, profile, friends, location and voice data. This cannot be undone.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: () => {
+            Alert.alert("Are you sure?", "This is permanent.", [
+              { text: "Cancel", style: "cancel" },
+              {
+                text: "Delete my account",
+                style: "destructive",
+                onPress: async () => {
+                  try {
+                    const { data } = await supabase.auth.getUser();
+                    if (!data?.user) return;
+                    await stopSharing();
+                    await deleteAccount(data.user.id);
+                  } catch (e: any) {
+                    Alert.alert("Couldn't delete account", e.message);
+                  }
+                },
+              },
+            ]);
+          },
+        },
+      ]
+    );
   };
 
   if (loading) {
@@ -201,6 +238,16 @@ export default function ProfileScreen() {
       <TouchableOpacity style={styles.signOutButton} onPress={handleSignOut}>
         <Ionicons name="log-out-outline" size={18} color="#444" />
         <Text style={styles.signOutText}>Sign Out</Text>
+      </TouchableOpacity>
+
+      {/* Delete account */}
+      <TouchableOpacity style={styles.deleteButton} onPress={handleDeleteAccount}>
+        <Text style={styles.deleteText}>Delete Account</Text>
+      </TouchableOpacity>
+
+      {/* Privacy policy */}
+      <TouchableOpacity style={styles.privacyButton} onPress={() => Linking.openURL(PRIVACY_URL)}>
+        <Text style={styles.privacyText}>Privacy Policy</Text>
       </TouchableOpacity>
     </ScrollView>
   );
@@ -375,5 +422,25 @@ const styles = StyleSheet.create({
   signOutText: {
     color: "#444",
     fontSize: 14,
+  },
+  deleteButton: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 12,
+    marginBottom: 8,
+  },
+  deleteText: {
+    color: "#5a2a2a",
+    fontSize: 13,
+  },
+  privacyButton: {
+    alignItems: "center",
+    paddingVertical: 8,
+    marginBottom: 24,
+  },
+  privacyText: {
+    color: "#333",
+    fontSize: 12,
+    textDecorationLine: "underline",
   },
 });

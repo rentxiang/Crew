@@ -11,7 +11,10 @@ import {
   Image,
 } from "react-native";
 import * as AppleAuthentication from "expo-apple-authentication";
-import { GoogleSignin, statusCodes } from "@react-native-google-signin/google-signin";
+import {
+  GoogleSignin,
+  statusCodes,
+} from "@react-native-google-signin/google-signin";
 import { AntDesign } from "@expo/vector-icons";
 import { supabase } from "../services/supabase";
 
@@ -21,6 +24,7 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [mode, setMode] = useState<"signin" | "signup">("signin");
+  const [showEmail, setShowEmail] = useState(false);
 
   useEffect(() => {
     GoogleSignin.configure({
@@ -29,7 +33,11 @@ export default function Login() {
     });
   }, []);
 
-  async function upsertUser(userId: string, email: string | null, name?: string | null) {
+  async function upsertUser(
+    userId: string,
+    email: string | null,
+    name?: string | null
+  ) {
     const { data: existing } = await supabase
       .from("users")
       .select("id")
@@ -39,7 +47,8 @@ export default function Login() {
     if (existing) return;
 
     const displayName = name || (email ? email.split("@")[0] : "Rider");
-    const base = displayName.toLowerCase().replace(/[^a-z0-9_]/g, "") || "rider";
+    const base =
+      displayName.toLowerCase().replace(/[^a-z0-9_]/g, "") || "rider";
 
     const { error } = await supabase.from("users").insert({
       id: userId,
@@ -74,10 +83,15 @@ export default function Login() {
         provider: "apple",
         token: credential.identityToken,
       });
-      if (error) { Alert.alert("Sign In Failed", error.message); return; }
+      if (error) {
+        Alert.alert("Sign In Failed", error.message);
+        return;
+      }
       if (data.user) {
-        const fullName = [credential.fullName?.givenName, credential.fullName?.familyName]
-          .filter(Boolean).join(" ") || null;
+        const fullName =
+          [credential.fullName?.givenName, credential.fullName?.familyName]
+            .filter(Boolean)
+            .join(" ") || null;
         await upsertUser(data.user.id, data.user.email ?? null, fullName);
       }
     } catch (e: any) {
@@ -91,7 +105,8 @@ export default function Login() {
     setGoogleLoading(true);
     try {
       const response = await GoogleSignin.signIn();
-      const idToken = (response as any)?.data?.idToken ?? (response as any)?.idToken;
+      const idToken =
+        (response as any)?.data?.idToken ?? (response as any)?.idToken;
       if (!idToken) {
         Alert.alert("Google Sign In Failed", "No token returned.");
         return;
@@ -100,9 +115,15 @@ export default function Login() {
         provider: "google",
         token: idToken,
       });
-      if (error) { Alert.alert("Sign In Failed", error.message); return; }
+      if (error) {
+        Alert.alert("Sign In Failed", error.message);
+        return;
+      }
       if (data.user) {
-        const name = (response as any)?.data?.user?.name ?? (response as any)?.user?.name ?? null;
+        const name =
+          (response as any)?.data?.user?.name ??
+          (response as any)?.user?.name ??
+          null;
         await upsertUser(data.user.id, data.user.email ?? null, name);
       }
     } catch (e: any) {
@@ -116,7 +137,10 @@ export default function Login() {
 
   async function signInWithEmail() {
     setLoading(true);
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
     if (error) {
       Alert.alert("Sign In Failed", error.message);
     } else if (data?.user?.email) {
@@ -127,7 +151,10 @@ export default function Login() {
 
   async function signUpWithEmail() {
     setLoading(true);
-    const { data: { user }, error } = await supabase.auth.signUp({ email, password });
+    const {
+      data: { user },
+      error,
+    } = await supabase.auth.signUp({ email, password });
     if (error) {
       Alert.alert("Sign Up Failed", error.message);
     } else if (user?.email) {
@@ -154,16 +181,6 @@ export default function Login() {
         <Text style={styles.subtitle}>live group ride tracking</Text>
 
         <View style={styles.socialRow}>
-          {/* Apple Sign In — re-enable once local signing / paid team is sorted out
-          <AppleAuthentication.AppleAuthenticationButton
-            buttonType={AppleAuthentication.AppleAuthenticationButtonType.SIGN_IN}
-            buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.WHITE}
-            cornerRadius={10}
-            style={styles.socialButton}
-            onPress={signInWithApple}
-          />
-          */}
-
           <TouchableOpacity
             style={styles.socialButton}
             onPress={signInWithGoogle}
@@ -177,8 +194,25 @@ export default function Login() {
               </Text>
             </View>
           </TouchableOpacity>
+          <AppleAuthentication.AppleAuthenticationButton
+            buttonType={
+              AppleAuthentication.AppleAuthenticationButtonType.SIGN_IN
+            }
+            buttonStyle={
+              AppleAuthentication.AppleAuthenticationButtonStyle.WHITE
+            }
+            cornerRadius={10}
+            style={styles.socialButton}
+            onPress={signInWithApple}
+          />
         </View>
 
+        {!showEmail ? (
+          <TouchableOpacity style={styles.emailToggle} onPress={() => setShowEmail(true)}>
+            <Text style={styles.emailToggleText}>Sign in with email</Text>
+          </TouchableOpacity>
+        ) : (
+        <>
         <View style={styles.divider}>
           <View style={styles.dividerLine} />
           <Text style={styles.dividerText}>or</Text>
@@ -210,7 +244,11 @@ export default function Login() {
             disabled={loading}
           >
             <Text style={styles.emailButtonText}>
-              {loading ? "..." : mode === "signin" ? "RIDE IN" : "CREATE ACCOUNT"}
+              {loading
+                ? "..."
+                : mode === "signin"
+                ? "RIDE IN"
+                : "CREATE ACCOUNT"}
             </Text>
           </TouchableOpacity>
           <TouchableOpacity
@@ -218,10 +256,14 @@ export default function Login() {
             onPress={() => setMode(mode === "signin" ? "signup" : "signin")}
           >
             <Text style={styles.switchText}>
-              {mode === "signin" ? "New rider? Create account" : "Already have an account? Sign in"}
+              {mode === "signin"
+                ? "New rider? Create account"
+                : "Already have an account? Sign in"}
             </Text>
           </TouchableOpacity>
         </View>
+        </>
+        )}
       </View>
     </KeyboardAvoidingView>
   );
@@ -300,6 +342,15 @@ const styles = StyleSheet.create({
     color: "#444",
     fontSize: 13,
   },
+  emailToggle: {
+    alignItems: "center",
+    paddingVertical: 18,
+  },
+  emailToggleText: {
+    color: "#555",
+    fontSize: 13,
+    textDecorationLine: "underline",
+  },
   divider: {
     flexDirection: "row",
     alignItems: "center",
@@ -336,7 +387,7 @@ const styles = StyleSheet.create({
   },
   googleText: {
     color: "#fff",
-    fontSize: 15,
+    fontSize: 19,
     fontWeight: "600",
     letterSpacing: 0.2,
   },
