@@ -36,6 +36,8 @@ type LocationSharingContextType = {
   setCurrentRoom: (room: Room | null) => void;
   focusCoords: Coords | null;
   setFocusCoords: (coords: Coords | null) => void;
+  showRoute: boolean;
+  setShowRoute: (v: boolean) => void;
 };
 
 const LocationSharingContext = createContext<LocationSharingContextType | null>(null);
@@ -44,6 +46,7 @@ export function LocationSharingProvider({ children }: { children: ReactNode }) {
   const [isSharing, setIsSharing] = useState(false);
   const [currentRoom, _setCurrentRoom] = useState<Room | null>(null);
   const [focusCoords, setFocusCoords] = useState<Coords | null>(null);
+  const [showRoute, setShowRoute] = useState(true);
   const coordsRef = useRef<Coords | null>(null);
   const stopRef = useRef<(() => Promise<void>) | null>(null);
   const userIdRef = useRef<string | null>(null);
@@ -56,11 +59,11 @@ export function LocationSharingProvider({ children }: { children: ReactNode }) {
       const saved: Room = JSON.parse(raw);
       const { data } = await supabase
         .from("rooms")
-        .select("id, code, host_id")
+        .select("id, code, host_id, expires_at")
         .eq("id", saved.id)
         .single();
-      if (data) {
-        _setCurrentRoom(data as Room);
+      if (data && (!data.expires_at || new Date(data.expires_at).getTime() > Date.now())) {
+        _setCurrentRoom({ id: data.id, code: data.code, host_id: data.host_id });
       } else {
         await AsyncStorage.removeItem(ROOM_KEY);
       }
@@ -153,7 +156,7 @@ export function LocationSharingProvider({ children }: { children: ReactNode }) {
 
   return (
     <LocationSharingContext.Provider
-      value={{ isSharing, coordsRef, startSharing, stopSharing, currentRoom, setCurrentRoom, focusCoords, setFocusCoords }}
+      value={{ isSharing, coordsRef, startSharing, stopSharing, currentRoom, setCurrentRoom, focusCoords, setFocusCoords, showRoute, setShowRoute }}
     >
       {children}
     </LocationSharingContext.Provider>

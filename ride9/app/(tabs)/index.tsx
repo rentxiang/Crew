@@ -1,7 +1,7 @@
-import Mapbox, { Camera, LocationPuck, MapView } from "@rnmapbox/maps";
+import Mapbox, { Camera, LocationPuck, MapView, ShapeSource, LineLayer, MarkerView, StyleImport } from "@rnmapbox/maps";
 import { useEffect, useState, useRef, useCallback } from "react";
 import { useFocusEffect } from "expo-router";
-import { Animated, StyleSheet, TouchableOpacity, View, Text } from "react-native";
+import { Animated, StyleSheet, TouchableOpacity, View, Text, Alert, Linking } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as Location from "expo-location";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -13,6 +13,7 @@ import { getRoomMemberLocations, getRoomMembers } from "../../services/rooms";
 import { useLocationSharing } from "../../contexts/LocationSharingContext";
 import { avatarUrl, getProfile } from "../../services/profile";
 import { getVoiceMessages, getVoiceSignedUrl, deleteOwnVoiceMessage, VoiceMessage } from "../../services/voice";
+import { getRoute, subscribeRoute, RoomRoute, Waypoint } from "../../services/routes";
 import { createAudioPlayer, setAudioModeAsync } from "expo-audio";
 import VoicePTTButton from "../../components/VoicePTTButton";
 
@@ -36,13 +37,15 @@ export default function MapScreen() {
     color: "#00c46a",
   });
 
-  const { coordsRef, isSharing, startSharing, stopSharing, currentRoom, focusCoords, setFocusCoords } =
+  const { coordsRef, isSharing, startSharing, stopSharing, currentRoom, focusCoords, setFocusCoords, showRoute } =
     useLocationSharing();
   const [followMode, setFollowMode] = useState(false);
   const [selectedRiderId, setSelectedRiderId] = useState<string | null>(null);
   const [voiceMessages, setVoiceMessages] = useState<Record<string, VoiceMessage>>({});
   const [playingUserId, setPlayingUserId] = useState<string | null>(null);
   const [playedVoices, setPlayedVoices] = useState<Set<string>>(new Set());
+  const [roomRoute, setRoomRoute] = useState<RoomRoute | null>(null);
+  const [mapTheme, setMapTheme] = useState<"dark" | "day">("dark");
   const voicePlayerRef = useRef<any>(null);
   const cameraRef = useRef<Camera>(null);
   const prevFriendIdsRef = useRef<string>("");
@@ -119,13 +122,14 @@ export default function MapScreen() {
     return () => sub?.subscription.unsubscribe();
   }, []);
 
-  // Refresh profiles every time the map tab comes into focus
+  // Refresh profiles + route every time the map tab comes into focus
   useFocusEffect(
     useCallback(() => {
       if (!authUser) return;
       getProfile(authUser.id).then((p) => { if (p) setSelfProfile(p); });
       loadFriends(authUser.id);
-    }, [authUser])
+      if (currentRoom) getRoute(currentRoom.id).then((r) => r && setRoomRoute(r));
+    }, [authUser, currentRoom?.id])
   );
 
   // Refetch locations only when the set of friend IDs changes (not on profile-only refreshes)
@@ -307,6 +311,43 @@ export default function MapScreen() {
     const interval = setInterval(load, 5000);
     return () => clearInterval(interval);
   }, [currentRoom?.id]);
+
+  // Load + subscribe to the room's shared route
+  useEffect(() => {
+    if (!currentRoom) { setRoomRoute(null); return; }
+    const roomId = currentRoom.id;
+    const load = async () => {
+      const r = await getRoute(roomId);
+      // Keep the existing route on a transient null; only realtime DELETE clears it
+      setRoomRoute((prev) => (r === null && prev ? prev : r));
+    };
+    load();
+    const channel = subscribeRoute(roomId, (payload: any) => {
+      if (payload?.eventType === "DELETE") setRoomRoute(null);
+      else load();
+    });
+    return () => { channel.unsubscribe(); };
+  }, [currentRoom?.id]);
+
+  // Re-fetch the route when it's toggled back on (recovers from any stale state)
+  useEffect(() => {
+    if (showRoute && currentRoom) getRoute(currentRoom.id).then((r) => r && setRoomRoute(r));
+  }, [showRoute]);
+
+  const openInMaps = (w: Waypoint) => {
+    Alert.alert(w.label, "Open directions in:", [
+      {
+        text: "Apple Maps",
+        onPress: () => Linking.openURL(`http://maps.apple.com/?daddr=${w.lat},${w.lng}`),
+      },
+      {
+        text: "Google Maps",
+        onPress: () =>
+          Linking.openURL(`https://www.google.com/maps/dir/?api=1&destination=${w.lat},${w.lng}`),
+      },
+      { text: "Cancel", style: "cancel" },
+    ]);
+  };
 
   // Fetch voice messages for friends + room members
   useEffect(() => {
@@ -499,7 +540,7 @@ export default function MapScreen() {
     <View style={styles.container}>
       <MapView
         style={styles.map}
-        styleURL="mapbox://styles/mapbox/dark-v11"
+        styleURL={mapTheme === "dark" ? "mapbox://styles/mapbox/dark-v11" : "mapbox://styles/mapbox/standard"}
         onCameraChanged={(e) => setZoomLevel(e.properties.zoom)}
         onTouchStart={() => { lastMapInteractionRef.current = Date.now(); }}
         onPress={() => {
@@ -507,6 +548,9 @@ export default function MapScreen() {
           setSelectedRiderId(null);
         }}
       >
+        {mapTheme === "day" && (
+          <StyleImport id="basemap" existing config={{ lightPreset: "day" }} />
+        )}
         <Camera
           ref={cameraRef}
           zoomLevel={15}
@@ -519,9 +563,45 @@ export default function MapScreen() {
             pulsing={{ isEnabled: true }}
           />
         )}
+        {showRoute && roomRoute?.geometry?.coordinates && roomRoute.geometry.coordinates.length > 1 && (
+          <ShapeSource
+            key={`sharedRoute-${mapTheme}`}
+            id="sharedRoute"
+            shape={{
+              type: "Feature",
+              properties: {},
+              geometry: { type: "LineString", coordinates: roomRoute.geometry.coordinates },
+            }}
+          >
+            <LineLayer
+              id="sharedRouteLine"
+              style={{ lineColor: "#ff4500", lineWidth: 4, lineCap: "round", lineJoin: "round", lineOpacity: 0.85 }}
+            />
+          </ShapeSource>
+        )}
+        {showRoute && roomRoute?.waypoints?.map((w, i) => {
+          const total = roomRoute.waypoints.length;
+          const isStart = i === 0 && total > 1;
+          const isEnd = i === total - 1;
+          return (
+            <MarkerView key={`wp-${i}-${mapTheme}`} id={`wp-${i}`} coordinate={[w.lng, w.lat]} allowOverlap>
+              <TouchableOpacity
+                style={[styles.routePin, isStart && styles.routePinStart]}
+                onPress={() => openInMaps(w)}
+                activeOpacity={0.8}
+              >
+                {isStart || isEnd ? (
+                  <Ionicons name={isStart ? "navigate" : "flag"} size={13} color="#fff" />
+                ) : (
+                  <Text style={styles.routePinText}>{i}</Text>
+                )}
+              </TouchableOpacity>
+            </MarkerView>
+          );
+        })}
         {allRiders.map((r) => (
           <RiderMarker
-            key={r.user_id}
+            key={`${r.user_id}-${mapTheme}`}
             rider={r}
             showLabel={zoomLevel >= 13}
             selected={selectedRiderId === r.user_id}
@@ -543,6 +623,7 @@ export default function MapScreen() {
         ))}
         {isSharing && selfCoords && selfProfile && (
           <RiderMarker
+            key={`self-${mapTheme}`}
             rider={{
               user_id: `self-${authUser?.id}`,
               name: selfProfile.name ?? "Me",
@@ -566,6 +647,15 @@ export default function MapScreen() {
           />
         )}
       </MapView>
+
+      {/* Map theme toggle (top-right) */}
+      <TouchableOpacity
+        style={styles.themeButton}
+        onPress={() => setMapTheme((t) => (t === "dark" ? "day" : "dark"))}
+        activeOpacity={0.8}
+      >
+        <Ionicons name={mapTheme === "dark" ? "sunny" : "moon"} size={17} color="#fff" />
+      </TouchableOpacity>
 
       {/* HUD */}
       {activeCount > 0 && (
@@ -715,12 +805,43 @@ const styles = StyleSheet.create({
     right: 16,
     gap: 10,
   },
+  routePin: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: "#ff4500",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 2,
+    borderColor: "#fff",
+  },
+  routePinText: {
+    color: "#fff",
+    fontSize: 12,
+    fontWeight: "800",
+  },
+  routePinStart: {
+    backgroundColor: "#22c55e",
+  },
   iconButton: {
     backgroundColor: "rgba(10, 10, 10, 0.9)",
     borderWidth: 1,
     borderColor: "#222",
     padding: 13,
     borderRadius: 14,
+  },
+  themeButton: {
+    position: "absolute",
+    top: 80,
+    right: 16,
+    width: 34,
+    height: 34,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(8, 8, 8, 0.88)",
+    borderWidth: 1,
+    borderColor: "#1e1e1e",
+    borderRadius: 17,
   },
   iconButtonActive: {
     borderColor: "#00c46a33",

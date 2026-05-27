@@ -272,6 +272,7 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     borderWidth: 2,
     borderColor: "#ff4500",
+    backgroundColor: "#1a1a1a",
   },
   avatarStale: {
     borderColor: "#444",

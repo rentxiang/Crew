@@ -27,17 +27,20 @@ export async function createRoom(userId: string): Promise<Room> {
 export async function joinRoom(code: string, userId: string): Promise<Room> {
   const { data: room, error } = await supabase
     .from("rooms")
-    .select("id, code, host_id")
+    .select("id, code, host_id, expires_at")
     .eq("code", code.trim())
     .single();
 
   if (error || !room) throw new Error("Room not found. Check the code and try again.");
+  if (room.expires_at && new Date(room.expires_at).getTime() < Date.now()) {
+    throw new Error("This ride has ended.");
+  }
 
   await supabase
     .from("room_members")
     .upsert({ room_id: room.id, user_id: userId }, { onConflict: "room_id,user_id" });
 
-  return room as Room;
+  return { id: room.id, code: room.code, host_id: room.host_id };
 }
 
 export async function leaveRoom(roomId: string, userId: string): Promise<void> {

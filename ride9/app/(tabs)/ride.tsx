@@ -8,8 +8,10 @@ import {
   Alert,
   TextInput,
   Share,
+  Linking,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
 import { supabase } from "../../services/supabase";
 import { useLocationSharing } from "../../contexts/LocationSharingContext";
 import {
@@ -21,9 +23,12 @@ import {
   subscribeRoomMembers,
   RoomMember,
 } from "../../services/rooms";
+import { getRoute, subscribeRoute, RoomRoute } from "../../services/routes";
+import RouteEditor from "../../components/RouteEditor";
 
 export default function RideScreen() {
-  const { isSharing, startSharing, stopSharing, currentRoom, setCurrentRoom } =
+  const router = useRouter();
+  const { isSharing, startSharing, stopSharing, currentRoom, setCurrentRoom, coordsRef, showRoute, setShowRoute } =
     useLocationSharing();
 
   const [authUser, setAuthUser] = useState<any>(null);
@@ -31,8 +36,11 @@ export default function RideScreen() {
   const [isJoining, setIsJoining] = useState(false);
   const [joinCode, setJoinCode] = useState("");
   const [loading, setLoading] = useState(false);
+  const [route, setRoute] = useState<RoomRoute | null>(null);
+  const [editorVisible, setEditorVisible] = useState(false);
 
   const realtimeSubRef = useRef<any>(null);
+  const routeSubRef = useRef<any>(null);
 
   const isHost = currentRoom?.host_id === authUser?.id;
 
@@ -42,22 +50,29 @@ export default function RideScreen() {
     });
   }, []);
 
-  // Load members whenever room changes
+  // Load members + route whenever room changes
   useEffect(() => {
     if (!currentRoom) {
       setMembers([]);
+      setRoute(null);
       realtimeSubRef.current?.unsubscribe();
       realtimeSubRef.current = null;
+      routeSubRef.current?.unsubscribe();
+      routeSubRef.current = null;
       return;
     }
 
     loadMembers();
+    loadRoute();
 
     realtimeSubRef.current = subscribeRoomMembers(currentRoom.id, loadMembers);
+    routeSubRef.current = subscribeRoute(currentRoom.id, loadRoute);
 
     return () => {
       realtimeSubRef.current?.unsubscribe();
       realtimeSubRef.current = null;
+      routeSubRef.current?.unsubscribe();
+      routeSubRef.current = null;
     };
   }, [currentRoom?.id]);
 
@@ -65,6 +80,12 @@ export default function RideScreen() {
     if (!currentRoom) return;
     const data = await getRoomMembers(currentRoom.id);
     setMembers(data);
+  };
+
+  const loadRoute = async () => {
+    if (!currentRoom) return;
+    const data = await getRoute(currentRoom.id);
+    setRoute(data);
   };
 
   const handleStartRide = async () => {
@@ -132,6 +153,23 @@ export default function RideScreen() {
     Share.share({
       message: `Join my group ride! Code: ${currentRoom.code}`,
     });
+  };
+
+  const openFullRoute = () => {
+    const wps = route?.waypoints ?? [];
+    if (wps.length === 0) return;
+    const dest = wps[wps.length - 1];
+    if (wps.length === 1) {
+      Linking.openURL(
+        `https://www.google.com/maps/dir/?api=1&destination=${dest.lat},${dest.lng}&travelmode=driving`
+      );
+      return;
+    }
+    const origin = wps[0];
+    const mids = wps.slice(1, -1).map((w) => `${w.lat},${w.lng}`).join("|");
+    let url = `https://www.google.com/maps/dir/?api=1&origin=${origin.lat},${origin.lng}&destination=${dest.lat},${dest.lng}&travelmode=driving`;
+    if (mids) url += `&waypoints=${encodeURIComponent(mids)}`;
+    Linking.openURL(url);
   };
 
 
@@ -240,6 +278,69 @@ export default function RideScreen() {
         <Text style={styles.roomCode}>{currentRoom!.code}</Text>
         <Text style={styles.codeTap}>Tap to share with crew</Text>
       </TouchableOpacity>
+
+      {/* Route card */}
+      <View style={styles.routeCard}>
+        <View style={styles.routeCardLeft}>
+          <Ionicons name="map-outline" size={18} color="#ff4500" />
+          <View>
+            <Text style={styles.routeTitle}>ROUTE</Text>
+            <Text style={styles.routeSub}>
+              {route && route.waypoints.length > 0
+                ? `${route.waypoints.length} stop${route.waypoints.length > 1 ? "s" : ""}`
+                : "No route yet"}
+            </Text>
+          </View>
+        </View>
+        <View style={styles.routeActions}>
+          {route && route.waypoints.length > 0 && (
+            <>
+              <TouchableOpacity style={styles.routeIconBtn} onPress={openFullRoute}>
+                <Ionicons name="navigate" size={18} color="#ff4500" />
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.routeIconBtn, showRoute && styles.routeIconBtnActive]}
+                onPress={() => {
+                  const next = !showRoute;
+                  setShowRoute(next);
+                  if (next) router.navigate("/");
+                }}
+              >
+                <Ionicons
+                  name={showRoute ? "map" : "map-outline"}
+                  size={18}
+                  color={showRoute ? "#fff" : "#888"}
+                />
+              </TouchableOpacity>
+            </>
+          )}
+          {isHost && (
+            <TouchableOpacity style={styles.routePrimaryBtn} onPress={() => setEditorVisible(true)}>
+              <Text style={styles.routePrimaryText}>
+                {route && route.waypoints.length > 0 ? "Edit" : "Plan"}
+              </Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      </View>
+
+      {isHost && currentRoom && authUser && (
+        <RouteEditor
+          visible={editorVisible}
+          roomId={currentRoom.id}
+          userId={authUser.id}
+          initialWaypoints={route?.waypoints ?? []}
+          near={
+            coordsRef.current
+              ? { lat: coordsRef.current.latitude, lng: coordsRef.current.longitude }
+              : null
+          }
+          onClose={() => {
+            setEditorVisible(false);
+            loadRoute();
+          }}
+        />
+      )}
 
       {/* Members list */}
       <Text style={styles.sectionLabel}>RIDERS · {members.length}</Text>
@@ -441,6 +542,64 @@ const styles = StyleSheet.create({
     color: "#333",
     fontSize: 12,
     letterSpacing: 1,
+  },
+
+  // Route card
+  routeCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "#0f0f0f",
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "#191919",
+    padding: 16,
+    marginBottom: 24,
+  },
+  routeCardLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  routeTitle: {
+    color: "#fff",
+    fontSize: 12,
+    fontWeight: "800",
+    letterSpacing: 2,
+  },
+  routeSub: {
+    color: "#555",
+    fontSize: 12,
+    marginTop: 2,
+  },
+  routeActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  routeIconBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#1e1e1e",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  routeIconBtnActive: {
+    backgroundColor: "#1e1e1e",
+    borderColor: "#333",
+  },
+  routePrimaryBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 10,
+    backgroundColor: "#ff4500",
+  },
+  routePrimaryText: {
+    color: "#fff",
+    fontSize: 12,
+    fontWeight: "800",
   },
 
   // Members
