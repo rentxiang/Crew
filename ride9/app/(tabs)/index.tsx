@@ -14,6 +14,7 @@ import { useLocationSharing } from "../../contexts/LocationSharingContext";
 import { avatarUrl, getProfile } from "../../services/profile";
 import { getVoiceMessages, getVoiceSignedUrl, deleteOwnVoiceMessage, VoiceMessage } from "../../services/voice";
 import { getRoute, subscribeRoute, RoomRoute, Waypoint } from "../../services/routes";
+import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
 import { createAudioPlayer, setAudioModeAsync } from "expo-audio";
 import VoicePTTButton from "../../components/VoicePTTButton";
 
@@ -37,7 +38,7 @@ export default function MapScreen() {
     color: "#00c46a",
   });
 
-  const { coordsRef, isSharing, startSharing, stopSharing, currentRoom, focusCoords, setFocusCoords, showRoute } =
+  const { coordsRef, isSharing, isTransitioning, startSharing, stopSharing, currentRoom, focusCoords, setFocusCoords, showRoute } =
     useLocationSharing();
   const [followMode, setFollowMode] = useState(false);
   const [selectedRiderId, setSelectedRiderId] = useState<string | null>(null);
@@ -121,6 +122,14 @@ export default function MapScreen() {
 
     return () => sub?.subscription.unsubscribe();
   }, []);
+
+  // Keep the screen awake only while sharing location (actively riding)
+  useEffect(() => {
+    if (isSharing) {
+      activateKeepAwakeAsync("crew-map");
+      return () => { deactivateKeepAwake("crew-map"); };
+    }
+  }, [isSharing]);
 
   // Refresh profiles + route every time the map tab comes into focus
   useFocusEffect(
@@ -719,8 +728,9 @@ export default function MapScreen() {
 
         <Animated.View style={buttonAnimStyle}>
           <TouchableOpacity
-            style={[styles.iconButton, isSharing && styles.iconButtonActive]}
+            style={[styles.iconButton, isSharing && styles.iconButtonActive, isTransitioning && styles.iconButtonBusy]}
             onPress={toggleSharing}
+            disabled={isTransitioning}
             activeOpacity={0.8}
           >
             <Ionicons
@@ -848,6 +858,9 @@ const styles = StyleSheet.create({
   iconButtonActive: {
     borderColor: "#00c46a33",
     backgroundColor: "rgba(0, 196, 106, 0.08)",
+  },
+  iconButtonBusy: {
+    opacity: 0.5,
   },
   iconButtonFollow: {
     borderColor: "#ff450044",

@@ -8,6 +8,7 @@ import { Room } from "../services/rooms";
 
 const ROOM_KEY = "@crew/current_room";
 const ALWAYS_HINT_KEY = "@crew/always_hint_shown";
+const SHARING_KEY = "@crew/sharing";
 
 // One-time nudge toward "Always Allow" so background sharing is reliable
 async function maybePromptAlways() {
@@ -29,6 +30,7 @@ type Coords = { latitude: number; longitude: number };
 
 type LocationSharingContextType = {
   isSharing: boolean;
+  isTransitioning: boolean;
   coordsRef: React.MutableRefObject<Coords | null>;
   startSharing: (userId: string, opts?: { silent?: boolean }) => Promise<void>;
   stopSharing: () => Promise<void>;
@@ -44,12 +46,14 @@ const LocationSharingContext = createContext<LocationSharingContextType | null>(
 
 export function LocationSharingProvider({ children }: { children: ReactNode }) {
   const [isSharing, setIsSharing] = useState(false);
+  const [isTransitioning, setIsTransitioning] = useState(false);
   const [currentRoom, _setCurrentRoom] = useState<Room | null>(null);
   const [focusCoords, setFocusCoords] = useState<Coords | null>(null);
   const [showRoute, setShowRoute] = useState(true);
   const coordsRef = useRef<Coords | null>(null);
   const stopRef = useRef<(() => Promise<void>) | null>(null);
   const userIdRef = useRef<string | null>(null);
+  const busyRef = useRef(false); // guards against rapid start/stop taps overlapping
 
   // Restore room from storage on boot
   useEffect(() => {
@@ -81,43 +85,69 @@ export function LocationSharingProvider({ children }: { children: ReactNode }) {
   };
 
   const startSharing = async (userId: string, opts?: { silent?: boolean }) => {
-    if (stopRef.current) return;
-    userIdRef.current = userId;
-    const stop = await startLocationTracking(userId, (coords) => {
-      coordsRef.current = coords;
-    });
-    stopRef.current = stop;
-    setIsSharing(true);
-    if (!opts?.silent) maybePromptAlways();
+    if (busyRef.current || stopRef.current) return; // already on or mid-transition
+    busyRef.current = true;
+    setIsTransitioning(true);
+    setIsSharing(true); // optimistic — instant UI
+    try {
+      userIdRef.current = userId;
+      const stop = await startLocationTracking(userId, (coords) => {
+        coordsRef.current = coords;
+      });
+      stopRef.current = stop;
+      await AsyncStorage.setItem(SHARING_KEY, "1");
+      if (!opts?.silent) maybePromptAlways();
+    } catch {
+      // failed to start — roll back
+      setIsSharing(false);
+      stopRef.current = null;
+    } finally {
+      busyRef.current = false;
+      setIsTransitioning(false);
+    }
   };
 
   const stopSharing = async () => {
-    if (stopRef.current) {
-      await stopRef.current();
-      stopRef.current = null;
-    }
-    setIsSharing(false);
-    if (userIdRef.current) {
-      await updateSharingStatus(userIdRef.current, false);
+    if (busyRef.current) return; // mid-transition
+    busyRef.current = true;
+    setIsTransitioning(true);
+    setIsSharing(false); // optimistic — instant UI
+    try {
+      if (stopRef.current) {
+        await stopRef.current();
+        stopRef.current = null;
+      }
+      await AsyncStorage.setItem(SHARING_KEY, "0");
+      if (userIdRef.current) {
+        await updateSharingStatus(userIdRef.current, false);
+      }
+    } finally {
+      busyRef.current = false;
+      setIsTransitioning(false);
     }
   };
 
-  // On boot, sync client to the DB's authoritative sharing state.
-  // If the DB says we're still sharing (e.g. after a force-kill), resume tracking.
+  // On boot, restore sharing state. Use the local flag first (instant, no flash),
+  // and only consult the DB when there's no local flag yet (legacy/first run).
   useEffect(() => {
-    const reconcile = async () => {
+    const restoreSharing = async () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
-      const { data } = await supabase
-        .from("locations")
-        .select("is_sharing")
-        .eq("user_id", user.id)
-        .maybeSingle();
-      if (data?.is_sharing && !stopRef.current) {
-        await startSharing(user.id, { silent: true });
+      const local = await AsyncStorage.getItem(SHARING_KEY);
+      if (local === "1") {
+        startSharing(user.id, { silent: true });
+        return;
+      }
+      if (local === null) {
+        const { data } = await supabase
+          .from("locations")
+          .select("is_sharing")
+          .eq("user_id", user.id)
+          .maybeSingle();
+        if (data?.is_sharing) startSharing(user.id, { silent: true });
       }
     };
-    reconcile();
+    restoreSharing();
   }, []);
 
   // When returning to foreground while sharing, push a fresh location so friends
@@ -156,7 +186,7 @@ export function LocationSharingProvider({ children }: { children: ReactNode }) {
 
   return (
     <LocationSharingContext.Provider
-      value={{ isSharing, coordsRef, startSharing, stopSharing, currentRoom, setCurrentRoom, focusCoords, setFocusCoords, showRoute, setShowRoute }}
+      value={{ isSharing, isTransitioning, coordsRef, startSharing, stopSharing, currentRoom, setCurrentRoom, focusCoords, setFocusCoords, showRoute, setShowRoute }}
     >
       {children}
     </LocationSharingContext.Provider>

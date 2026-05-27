@@ -63,6 +63,14 @@ function isLive(loc: any): boolean {
   return !!loc?.is_sharing;
 }
 
+function lastSeenText(loc: any): string | null {
+  if (!loc?.is_sharing || !loc?.updated_at) return null;
+  const diffMin = Math.floor((Date.now() - new Date(loc.updated_at).getTime()) / 60000);
+  if (diffMin < 1) return "Live now";
+  if (diffMin < 60) return `Last seen ${diffMin}m ago`;
+  return `Last seen ${Math.floor(diffMin / 60)}h ago`;
+}
+
 function Avatar({
   seed,
   fallback,
@@ -443,6 +451,7 @@ export default function Friends() {
         renderItem={({ item }) => {
           const live = isLive(locations[item.friend_id]);
           const hasLocation = !!locations[item.friend_id]?.lat;
+          const seen = lastSeenText(locations[item.friend_id]);
           return (
             <View style={styles.friendItem}>
               <TouchableOpacity
@@ -466,6 +475,11 @@ export default function Friends() {
                   ) : null}
                   {item.friend.bike ? (
                     <Text style={styles.bike}>{item.friend.bike}</Text>
+                  ) : null}
+                  {seen ? (
+                    <Text style={[styles.lastSeen, seen === "Live now" && styles.lastSeenLive]}>
+                      {seen}
+                    </Text>
                   ) : null}
                 </View>
               </TouchableOpacity>
@@ -632,6 +646,15 @@ const styles = StyleSheet.create({
     color: "#2a2a2a",
     fontSize: 11,
     marginTop: 2,
+  },
+  lastSeen: {
+    color: "#555",
+    fontSize: 11,
+    marginTop: 3,
+  },
+  lastSeenLive: {
+    color: "#ff4500",
+    fontWeight: "700",
   },
   removeButton: {
     padding: 8,

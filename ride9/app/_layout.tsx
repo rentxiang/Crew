@@ -4,8 +4,10 @@ import { StatusBar } from "expo-status-bar";
 import { useEffect, useState } from "react";
 import "react-native-reanimated";
 import * as Linking from "expo-linking";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { supabase } from "@/services/supabase";
 import { LocationSharingProvider } from "@/contexts/LocationSharingContext";
+import { ONBOARDING_KEY, OnboardingContext } from "@/contexts/onboarding";
 
 function parseSupabaseUrl(url: string) {
   // Tokens can be in fragment (#) or query string (?)
@@ -32,10 +34,13 @@ export const unstable_settings = {
 
 export default function RootLayout() {
   const [session, setSession] = useState<any>(undefined);
+  const [onboarded, setOnboarded] = useState<boolean | undefined>(undefined);
   const router = useRouter();
   const segments = useSegments();
 
   useEffect(() => {
+    AsyncStorage.getItem(ONBOARDING_KEY).then((v) => setOnboarded(v === "1"));
+
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
     });
@@ -61,29 +66,35 @@ export default function RootLayout() {
   }, []);
 
   useEffect(() => {
-    if (session === undefined) return;
+    if (session === undefined || onboarded === undefined) return;
 
     const inLogin = segments[0] === "login";
+    const inOnboarding = segments[0] === "onboarding";
 
-    if (!session && !inLogin) {
-      router.replace("/login");
-    } else if (session && inLogin) {
-      router.replace("/(tabs)");
+    if (!onboarded) {
+      if (!inOnboarding) router.replace("/onboarding");
+    } else if (!session) {
+      if (!inLogin) router.replace("/login");
+    } else {
+      if (inLogin || inOnboarding) router.replace("/(tabs)");
     }
-  }, [session, segments]);
+  }, [session, onboarded, segments]);
 
-  if (session === undefined) return null;
+  if (session === undefined || onboarded === undefined) return null;
 
   return (
     <ThemeProvider value={DarkTheme}>
+      <OnboardingContext.Provider value={{ markSeen: () => setOnboarded(true) }}>
       <LocationSharingProvider>
         <Stack>
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
           <Stack.Screen name="login" options={{ headerShown: false }} />
+          <Stack.Screen name="onboarding" options={{ headerShown: false }} />
           <Stack.Screen name="auth/callback" options={{ headerShown: false }} />
         </Stack>
         <StatusBar style="light" />
       </LocationSharingProvider>
+      </OnboardingContext.Provider>
     </ThemeProvider>
   );
 }
