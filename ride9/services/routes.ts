@@ -135,8 +135,9 @@ export async function fetchRouteGeometry(
 }
 
 export function subscribeRoute(roomId: string, onChange: (payload: any) => void) {
+  // Unique channel per subscriber — MAP and RIDE both subscribe, same name would collide
   return supabase
-    .channel(`room-route-${roomId}`)
+    .channel(`room-route-${roomId}-${Math.random().toString(36).slice(2)}`)
     .on(
       "postgres_changes",
       { event: "*", schema: "public", table: "room_routes", filter: `room_id=eq.${roomId}` },

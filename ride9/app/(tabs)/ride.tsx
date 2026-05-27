@@ -28,7 +28,7 @@ import RouteEditor from "../../components/RouteEditor";
 
 export default function RideScreen() {
   const router = useRouter();
-  const { isSharing, startSharing, stopSharing, currentRoom, setCurrentRoom, coordsRef, showRoute, setShowRoute } =
+  const { isSharing, startSharing, currentRoom, setCurrentRoom, coordsRef, showRoute, setShowRoute } =
     useLocationSharing();
 
   const [authUser, setAuthUser] = useState<any>(null);
@@ -79,6 +79,15 @@ export default function RideScreen() {
   const loadMembers = async () => {
     if (!currentRoom) return;
     const data = await getRoomMembers(currentRoom.id);
+    // Empty = the room was closed by the host (members cascade-removed)
+    if (data.length === 0) {
+      setMembers([]);
+      if (currentRoom.host_id !== authUser?.id) {
+        Alert.alert("Ride ended", "The host ended this group ride.");
+      }
+      setCurrentRoom(null);
+      return;
+    }
     setMembers(data);
   };
 
@@ -129,7 +138,7 @@ export default function RideScreen() {
           if (!currentRoom) return;
           await deleteRoom(currentRoom.id);
           setCurrentRoom(null);
-          await stopSharing();
+          // stay online — leaving a room doesn't stop location sharing
         },
       },
     ]);
@@ -145,7 +154,7 @@ export default function RideScreen() {
           if (!currentRoom || !authUser) return;
           await leaveRoom(currentRoom.id, authUser.id);
           setCurrentRoom(null);
-          await stopSharing();
+          // stay online — leaving a room doesn't stop location sharing
         },
       },
     ]);
