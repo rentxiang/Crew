@@ -399,14 +399,15 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
-    paddingVertical: 12,
+    height: 54,
     paddingHorizontal: 10,
     borderRadius: 10,
     borderBottomWidth: 1,
     borderBottomColor: "#141414",
+    backgroundColor: "#080808",
   },
   stopRowActive: {
-    backgroundColor: "#161616",
+    backgroundColor: "#1a1a1a",
     borderBottomColor: "transparent",
   },
   stopIndex: {
