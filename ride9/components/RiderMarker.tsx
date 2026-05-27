@@ -35,6 +35,11 @@ export default function RiderMarker({
   const glowScale = useRef(new Animated.Value(1)).current;
   const glowOpacity = useRef(new Animated.Value(0.18)).current;
   const bubbleAnim = useRef(new Animated.Value(0)).current;
+  const lastSeenAnim = useRef(new Animated.Value(0)).current;
+  const bikeAnim = useRef(new Animated.Value(0)).current;
+  const [bubbleMounted, setBubbleMounted] = useState(false);
+  const [lastSeenMounted, setLastSeenMounted] = useState(false);
+  const [bikeMounted, setBikeMounted] = useState(false);
 
   const hasVoice = !!rider.voice;
 
@@ -59,21 +64,65 @@ export default function RiderMarker({
     }).start();
   }, [rider.latitude, rider.longitude]);
 
-  // Voice bubble expands smoothly when the rider is selected
+  // Voice bubble grows/shrinks its layout height so the avatar slides smoothly
   useEffect(() => {
     if (selected && hasVoice) {
+      setBubbleMounted(true);
       bubbleAnim.setValue(0);
       Animated.spring(bubbleAnim, {
         toValue: 1,
-        friction: 6,
-        tension: 90,
-        useNativeDriver: true,
+        friction: 7,
+        tension: 80,
+        useNativeDriver: false,
       }).start();
+    } else {
+      Animated.timing(bubbleAnim, {
+        toValue: 0,
+        duration: 180,
+        useNativeDriver: false,
+      }).start(({ finished }) => {
+        if (finished) setBubbleMounted(false);
+      });
     }
   }, [selected, hasVoice]);
 
   const lastSeen = getLastSeenText(rider.updated_at);
   const isStale = lastSeen !== null;
+  const showBike = (showLabel || selected) && !isStale && !!rider.bike;
+
+  // Grow/shrink + fade the bike line when it should show (zoom in or selected)
+  useEffect(() => {
+    if (showBike) {
+      setBikeMounted(true);
+      Animated.timing(bikeAnim, { toValue: 1, duration: 200, useNativeDriver: false }).start();
+    } else {
+      Animated.timing(bikeAnim, { toValue: 0, duration: 180, useNativeDriver: false }).start(
+        ({ finished }) => {
+          if (finished) setBikeMounted(false);
+        }
+      );
+    }
+  }, [showBike]);
+
+  // Grow/shrink + fade the "last seen" text when a stale rider is selected/deselected
+  useEffect(() => {
+    if (selected && isStale) {
+      setLastSeenMounted(true);
+      Animated.timing(lastSeenAnim, {
+        toValue: 1,
+        duration: 220,
+        useNativeDriver: false,
+      }).start();
+    } else {
+      Animated.timing(lastSeenAnim, {
+        toValue: 0,
+        duration: 200,
+        useNativeDriver: false,
+      }).start(({ finished }) => {
+        if (finished) setLastSeenMounted(false);
+      });
+    }
+  }, [selected, isStale]);
 
   useEffect(() => {
     if (isStale) {
@@ -119,13 +168,17 @@ export default function RiderMarker({
         activeOpacity={onPress ? 0.75 : 1}
         style={styles.container}
       >
-        {hasVoice && selected && (
+        {hasVoice && bubbleMounted && (
           <Animated.View
-            style={[
-              styles.voiceExpandRow,
-              { opacity: bubbleAnim, transform: [{ scale: bubbleAnim }] },
-            ]}
+            style={{
+              height: bubbleAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 46] }),
+              opacity: bubbleAnim,
+              overflow: "hidden",
+              justifyContent: "flex-end",
+              alignItems: "center",
+            }}
           >
+            <View style={styles.voiceExpandRow}>
             <TouchableOpacity
               style={[
                 styles.voiceBubble,
@@ -137,7 +190,7 @@ export default function RiderMarker({
             >
               <Ionicons
                 name={voicePlaying ? "volume-high" : "play"}
-                size={11}
+                size={14}
                 color="#fff"
               />
               <Text style={styles.voiceDur}>
@@ -150,9 +203,10 @@ export default function RiderMarker({
                 onPress={onDeleteVoice}
                 activeOpacity={0.7}
               >
-                <Ionicons name="trash" size={12} color="#ff5a52" />
+                <Ionicons name="trash" size={15} color="#ff5a52" />
               </TouchableOpacity>
             )}
+            </View>
           </Animated.View>
         )}
         <View style={styles.avatarWrapper}>
@@ -174,20 +228,36 @@ export default function RiderMarker({
               isStale && styles.avatarStale,
             ]}
           />
-          {hasVoice && !selected && (
+          {hasVoice && !bubbleMounted && (
             <View style={[styles.voiceBadge, voiceRead && styles.voiceRead]}>
               <Ionicons name="mic" size={10} color={voiceRead ? "#999" : "#fff"} />
             </View>
           )}
         </View>
-        <View style={[styles.label, isStale && !selected && styles.labelStale]}>
-          <Text style={[styles.name, isStale && !selected && styles.nameStale]}>
+        <View style={[styles.label, isStale && !lastSeenMounted && styles.labelStale]}>
+          <Text style={[styles.name, isStale && !lastSeenMounted && styles.nameStale]}>
             {rider.name}
           </Text>
-          {selected && isStale ? (
-            <Text style={styles.lastSeen}>{lastSeen}</Text>
-          ) : (showLabel || selected) && !isStale && rider.bike ? (
-            <Text style={styles.bike}>{rider.bike}</Text>
+          {lastSeenMounted ? (
+            <Animated.View
+              style={{
+                height: lastSeenAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 15] }),
+                opacity: lastSeenAnim,
+                overflow: "hidden",
+              }}
+            >
+              <Text style={styles.lastSeen}>{lastSeen}</Text>
+            </Animated.View>
+          ) : bikeMounted ? (
+            <Animated.View
+              style={{
+                height: bikeAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 15] }),
+                opacity: bikeAnim,
+                overflow: "hidden",
+              }}
+            >
+              <Text style={styles.bike}>{rider.bike}</Text>
+            </Animated.View>
           ) : null}
         </View>
       </TouchableOpacity>
@@ -220,16 +290,16 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-    marginBottom: 4,
+    paddingBottom: 6,
   },
   voiceBubble: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 4,
+    gap: 5,
     backgroundColor: "#ff4500",
-    paddingHorizontal: 9,
-    paddingVertical: 5,
-    borderRadius: 12,
+    paddingHorizontal: 13,
+    paddingVertical: 9,
+    borderRadius: 15,
     borderWidth: 2,
     borderColor: "#080808",
   },
@@ -237,9 +307,9 @@ const styles = StyleSheet.create({
     backgroundColor: "#007aff",
   },
   voiceDeleteBubble: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     backgroundColor: "#1e1e1e",
     alignItems: "center",
     justifyContent: "center",
@@ -251,7 +321,7 @@ const styles = StyleSheet.create({
   },
   voiceDur: {
     color: "#fff",
-    fontSize: 10,
+    fontSize: 12,
     fontWeight: "800",
   },
   avatarWrapper: {
