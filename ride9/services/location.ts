@@ -11,8 +11,8 @@ TaskManager.defineTask(LOCATION_TASK, async ({ data, error }: any) => {
   if (error || !data?.locations?.length) return;
   const userId = await AsyncStorage.getItem(USER_ID_KEY);
   if (!userId) return;
-  const { latitude, longitude } = data.locations[0].coords;
-  await updateLocation(userId, latitude, longitude);
+  const c = data.locations[0].coords;
+  await updateLocation(userId, c.latitude, c.longitude, c.speed, c.heading);
 });
 
 export async function startLocationTracking(
@@ -32,7 +32,13 @@ export async function startLocationTracking(
     { accuracy: Location.Accuracy.BestForNavigation, distanceInterval: 20 },
     (loc) => {
       onUpdate(loc.coords);
-      updateLocation(userId, loc.coords.latitude, loc.coords.longitude);
+      updateLocation(
+        userId,
+        loc.coords.latitude,
+        loc.coords.longitude,
+        loc.coords.speed,
+        loc.coords.heading
+      );
     }
   );
 
@@ -54,13 +60,19 @@ export async function startLocationTracking(
   };
 }
 
-export async function updateLocation(userId: string, lat: number, lng: number) {
+export async function updateLocation(
+  userId: string,
+  lat: number,
+  lng: number,
+  speed?: number | null,
+  heading?: number | null
+) {
+  const row: any = { user_id: userId, lat, lng, is_sharing: true };
+  if (speed != null && speed >= 0) row.speed = speed;
+  if (heading != null && heading >= 0) row.heading = heading;
   const { error } = await supabase
     .from("locations")
-    .upsert(
-      { user_id: userId, lat, lng, is_sharing: true },
-      { onConflict: "user_id" }
-    );
+    .upsert(row, { onConflict: "user_id" });
 
   if (error) console.error("Failed to update location:", error.message);
 }
@@ -83,7 +95,7 @@ export async function getFriendLocations(userId: string) {
 
   const { data, error } = await supabase
     .from("locations")
-    .select("user_id, lat, lng, is_sharing, updated_at")
+    .select("user_id, lat, lng, speed, heading, is_sharing, updated_at")
     .in("user_id", friendIds);
 
   if (error) {

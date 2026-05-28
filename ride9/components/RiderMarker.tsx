@@ -88,7 +88,42 @@ export default function RiderMarker({
 
   const lastSeen = getLastSeenText(rider.updated_at);
   const isStale = lastSeen !== null;
-  const showBike = (showLabel || selected) && !isStale && !!rider.bike;
+  // Speed (m/s → mph). When fast, intermittently swap the info line with a
+  // random vibe — sometimes the speed, sometimes a phrase, sometimes nothing.
+  const FAST_MPH = 75;
+  const speedMph =
+    typeof rider.speed === "number" && rider.speed > 0 ? rider.speed * 2.23694 : null;
+  const isFast = speedMph != null && speedMph >= FAST_MPH;
+
+  const [flashText, setFlashText] = useState<string | null>(null);
+  useEffect(() => {
+    if (!isFast || selected || speedMph == null) {
+      setFlashText(null);
+      return;
+    }
+    const phrases: ((mph: number) => string)[] = [
+      (m) => `🏍 ${Math.round(m)} mph`,
+      (m) => `racing at ${Math.round(m)}`,
+      () => "flying...",
+      () => "WSBK 🏁",
+      () => "send it",
+      () => "ripping it",
+      () => "redline",
+      () => "🏁 mode",
+      () => "full throttle",
+    ];
+    const flash = () => {
+      if (Math.random() < 0.25) return; // sometimes skip — keeps it surprising
+      const pick = phrases[Math.floor(Math.random() * phrases.length)](speedMph);
+      setFlashText(pick);
+      setTimeout(() => setFlashText(null), 4000);
+    };
+    flash();
+    const interval = setInterval(flash, 12000);
+    return () => clearInterval(interval);
+  }, [isFast, selected, speedMph]);
+
+  const showBike = (showLabel || selected) && !isStale && (!!rider.bike || isFast);
 
   // Grow/shrink + fade the bike line when it should show (zoom in or selected)
   useEffect(() => {
@@ -256,7 +291,11 @@ export default function RiderMarker({
                 overflow: "hidden",
               }}
             >
-              <Text style={styles.bike}>{rider.bike}</Text>
+              {!selected && flashText ? (
+                <Text style={styles.speed}>{flashText}</Text>
+              ) : rider.bike ? (
+                <Text style={styles.bike}>{rider.bike}</Text>
+              ) : null}
             </Animated.View>
           ) : null}
         </View>
@@ -374,6 +413,13 @@ const styles = StyleSheet.create({
     color: "#888",
     marginTop: 1,
     letterSpacing: 0.2,
+  },
+  speed: {
+    fontSize: 10,
+    color: "#ff4500",
+    fontWeight: "800",
+    marginTop: 1,
+    letterSpacing: 0.5,
   },
   lastSeen: {
     fontSize: 10,

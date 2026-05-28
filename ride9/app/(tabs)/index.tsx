@@ -498,6 +498,8 @@ export default function MapScreen() {
       longitude: loc?.lng,
       is_sharing: loc?.is_sharing ?? false,
       updated_at: loc?.updated_at,
+      speed: loc?.speed,
+      heading: loc?.heading,
       voice: voiceMessages[r.user_id] ?? null,
       inRoom: roomMemberIds.has(r.user_id),
     };

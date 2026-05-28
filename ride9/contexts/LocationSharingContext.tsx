@@ -172,7 +172,13 @@ export function LocationSharingProvider({ children }: { children: ReactNode }) {
           latitude: loc.coords.latitude,
           longitude: loc.coords.longitude,
         };
-        await updateLocation(userIdRef.current, loc.coords.latitude, loc.coords.longitude);
+        await updateLocation(
+          userIdRef.current,
+          loc.coords.latitude,
+          loc.coords.longitude,
+          loc.coords.speed,
+          loc.coords.heading
+        );
       } catch {
         if (coordsRef.current) {
           await updateLocation(

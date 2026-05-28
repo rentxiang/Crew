@@ -169,7 +169,7 @@ export default function Friends() {
     }
     const { data } = await supabase
       .from("locations")
-      .select("user_id, lat, lng, is_sharing, updated_at")
+      .select("user_id, lat, lng, speed, heading, is_sharing, updated_at")
       .in("user_id", friendIds);
     const map: Record<string, any> = {};
     data?.forEach((loc: any) => {
