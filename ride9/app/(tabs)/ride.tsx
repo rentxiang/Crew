@@ -24,6 +24,7 @@ import {
   RoomMember,
 } from "../../services/rooms";
 import { getRoute, subscribeRoute, RoomRoute } from "../../services/routes";
+import { addFriendById } from "../../services/friends";
 import RouteEditor from "../../components/RouteEditor";
 
 export default function RideScreen() {
@@ -38,6 +39,8 @@ export default function RideScreen() {
   const [loading, setLoading] = useState(false);
   const [route, setRoute] = useState<RoomRoute | null>(null);
   const [editorVisible, setEditorVisible] = useState(false);
+  const [friendSet, setFriendSet] = useState<Set<string>>(new Set()); // accepted friends
+  const [pendingSet, setPendingSet] = useState<Set<string>>(new Set()); // outgoing requests
 
   const realtimeSubRef = useRef<any>(null);
   const routeSubRef = useRef<any>(null);
@@ -49,6 +52,55 @@ export default function RideScreen() {
       if (data?.user) setAuthUser(data.user);
     });
   }, []);
+
+  // Load own friends/pending sets so member rows can show "+" or "Pending"
+  const loadFriendSets = async (uid: string) => {
+    const { data } = await supabase
+      .from("friends")
+      .select("user_id, friend_id, status")
+      .or(`user_id.eq.${uid},friend_id.eq.${uid}`);
+    const accepted = new Set<string>();
+    const pending = new Set<string>();
+    (data ?? []).forEach((r: any) => {
+      const other = r.user_id === uid ? r.friend_id : r.user_id;
+      if (r.status === "accepted") accepted.add(other);
+      else if (r.status === "pending" && r.user_id === uid) pending.add(other);
+    });
+    setFriendSet(accepted);
+    setPendingSet(pending);
+  };
+
+  useEffect(() => {
+    if (!authUser) return;
+    loadFriendSets(authUser.id);
+    const channel = supabase
+      .channel(`ride-friend-sets-${authUser.id}`)
+      .on("postgres_changes",
+        { event: "*", schema: "public", table: "friends", filter: `user_id=eq.${authUser.id}` },
+        () => loadFriendSets(authUser.id)
+      )
+      .on("postgres_changes",
+        { event: "*", schema: "public", table: "friends", filter: `friend_id=eq.${authUser.id}` },
+        () => loadFriendSets(authUser.id)
+      )
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [authUser]);
+
+  const handleAddRoommate = async (member: RoomMember) => {
+    if (!authUser) return;
+    try {
+      const result = await addFriendById(authUser.id, member.user_id);
+      setPendingSet((p) => new Set(p).add(member.user_id));
+      if ((result as any)?.autoAccepted) {
+        Alert.alert("Crew up!", `${member.name} is now in your crew.`);
+      } else {
+        Alert.alert("Request sent", `Waiting for ${member.name} to accept.`);
+      }
+    } catch (e: any) {
+      Alert.alert("Couldn't add", e.message);
+    }
+  };
 
   // Load members + route whenever room changes
   useEffect(() => {
@@ -367,6 +419,8 @@ export default function RideScreen() {
         renderItem={({ item }) => {
           const isMe = item.user_id === authUser?.id;
           const isRoomHost = item.user_id === currentRoom?.host_id;
+          const isFriend = friendSet.has(item.user_id);
+          const isPending = pendingSet.has(item.user_id);
           return (
             <View style={styles.memberRow}>
               <View style={styles.memberLeft}>
@@ -376,12 +430,22 @@ export default function RideScreen() {
                     {item.name}
                     {isMe ? "  (you)" : ""}
                   </Text>
-                  {isRoomHost && (
-                    <Text style={styles.hostBadge}>host</Text>
-                  )}
+                  {isRoomHost && <Text style={styles.hostBadge}>host</Text>}
                 </View>
               </View>
-              <Ionicons name="location" size={14} color="#ff4500" />
+              {isMe ? null : isFriend ? (
+                <Ionicons name="checkmark" size={16} color="#555" />
+              ) : isPending ? (
+                <Text style={styles.pendingTag}>pending</Text>
+              ) : (
+                <TouchableOpacity
+                  style={styles.addInline}
+                  onPress={() => handleAddRoommate(item)}
+                  hitSlop={8}
+                >
+                  <Ionicons name="person-add" size={16} color="#ff4500" />
+                </TouchableOpacity>
+              )}
             </View>
           );
         }}
@@ -625,6 +689,14 @@ const styles = StyleSheet.create({
   memberList: {
     gap: 0,
     flexGrow: 1,
+  },
+  addInline: {
+    padding: 6,
+  },
+  pendingTag: {
+    color: "#555",
+    fontSize: 11,
+    letterSpacing: 1,
   },
   memberRow: {
     flexDirection: "row",

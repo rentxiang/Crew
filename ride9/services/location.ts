@@ -17,7 +17,12 @@ TaskManager.defineTask(LOCATION_TASK, async ({ data, error }: any) => {
 
 export async function startLocationTracking(
   userId: string,
-  onUpdate: (coords: { latitude: number; longitude: number }) => void
+  onUpdate: (coords: {
+    latitude: number;
+    longitude: number;
+    heading?: number | null;
+    speed?: number | null;
+  }) => void
 ): Promise<() => Promise<void>> {
   const { status: fgStatus } = await Location.requestForegroundPermissionsAsync();
   if (fgStatus !== "granted") return async () => {};

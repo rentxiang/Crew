@@ -35,7 +35,12 @@ async function maybeShowSharingIntro() {
   );
 }
 
-type Coords = { latitude: number; longitude: number };
+type Coords = {
+  latitude: number;
+  longitude: number;
+  heading?: number | null;
+  speed?: number | null;
+};
 
 type LocationSharingContextType = {
   isSharing: boolean;
@@ -101,7 +106,12 @@ export function LocationSharingProvider({ children }: { children: ReactNode }) {
     try {
       userIdRef.current = userId;
       const stop = await startLocationTracking(userId, (coords) => {
-        coordsRef.current = coords;
+        coordsRef.current = {
+          latitude: coords.latitude,
+          longitude: coords.longitude,
+          heading: coords.heading,
+          speed: coords.speed,
+        };
       });
       stopRef.current = stop;
       await AsyncStorage.setItem(SHARING_KEY, "1");

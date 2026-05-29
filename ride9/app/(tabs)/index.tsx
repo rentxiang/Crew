@@ -14,7 +14,17 @@ import { useLocationSharing } from "../../contexts/LocationSharingContext";
 import { avatarUrl, getProfile } from "../../services/profile";
 import { getVoiceMessages, getVoiceSignedUrl, deleteOwnVoiceMessage, VoiceMessage } from "../../services/voice";
 import { getRoute, subscribeRoute, RoomRoute, Waypoint } from "../../services/routes";
+import {
+  reportHazard,
+  deleteHazard,
+  subscribeHazards,
+  distanceMeters,
+  HAZARD_RADIUS_M,
+  HAZARD_RADIUS_MILES,
+  Hazard,
+} from "../../services/hazards";
 import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
+import PoliceIcon from "../../assets/images/police.svg";
 import { createAudioPlayer, setAudioModeAsync } from "expo-audio";
 import VoicePTTButton from "../../components/VoicePTTButton";
 
@@ -47,6 +57,8 @@ export default function MapScreen() {
   const [playedVoices, setPlayedVoices] = useState<Set<string>>(new Set());
   const [roomRoute, setRoomRoute] = useState<RoomRoute | null>(null);
   const [mapTheme, setMapTheme] = useState<"dark" | "day">("dark");
+  const [hazards, setHazards] = useState<Hazard[]>([]);
+  const [pttVisible, setPttVisible] = useState(false);
   const voicePlayerRef = useRef<any>(null);
   const cameraRef = useRef<Camera>(null);
   const prevFriendIdsRef = useRef<string>("");
@@ -202,15 +214,23 @@ export default function MapScreen() {
     return () => clearInterval(interval);
   }, [isSharing]);
 
-  // Follow mode: recenter on user, but wait 3s after last map interaction
+  // Follow mode: nav-style pitched camera that tracks heading; recenter only
+  // after 2s of no user interaction so dragging the map isn't fought.
   useEffect(() => {
-    if (!followMode) return;
+    if (!followMode) {
+      // Reset pitch/heading on unlock
+      cameraRef.current?.setCamera({ pitch: 0, heading: 0, animationDuration: 500 });
+      return;
+    }
     const interval = setInterval(() => {
       const idle = Date.now() - lastMapInteractionRef.current >= 2000;
       if (idle && coordsRef.current && cameraRef.current) {
+        const hdg = coordsRef.current.heading;
         cameraRef.current.setCamera({
           centerCoordinate: [coordsRef.current.longitude, coordsRef.current.latitude],
           zoomLevel: 17,
+          pitch: 60,
+          heading: hdg != null && hdg >= 0 ? hdg : 0,
           animationDuration: 800,
         });
       }
@@ -344,6 +364,103 @@ export default function MapScreen() {
   useEffect(() => {
     if (showRoute && currentRoom) getRoute(currentRoom.id).then(setRoomRoute).catch(() => {});
   }, [showRoute]);
+
+  // ── Hazards (police reports) ──────────────────────────────
+  useEffect(() => {
+    if (!authUser) return;
+    const load = async () => {
+      // Always fetch all active hazards — works whether or not sharing is on / coords are known.
+      // At this scale total active hazards is small; radius is only used for realtime filtering.
+      const { data } = await supabase
+        .from("hazards")
+        .select("*")
+        .gt("expires_at", new Date().toISOString());
+      setHazards((data as Hazard[]) ?? []);
+    };
+    load();
+    const channel = subscribeHazards((payload: any) => {
+      if (payload.eventType === "DELETE") {
+        const old = payload.old;
+        setHazards((prev) => prev.filter((h) => h.id !== old?.id));
+        return;
+      }
+      const h = payload.new as Hazard;
+      const c = coordsRef.current;
+      if (c) {
+        const d = distanceMeters(c.latitude, c.longitude, h.lat, h.lng);
+        if (d > HAZARD_RADIUS_M) return;
+      }
+      setHazards((prev) => {
+        const i = prev.findIndex((x) => x.id === h.id);
+        if (i >= 0) {
+          const next = [...prev];
+          next[i] = h;
+          return next;
+        }
+        return [...prev, h];
+      });
+    });
+    return () => { channel.unsubscribe(); };
+  }, [authUser]);
+
+  // Drop expired hazards locally (server cron also cleans every 5 min)
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setHazards((prev) =>
+        prev.filter((h) => new Date(h.expires_at).getTime() > Date.now())
+      );
+    }, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const handleReportPolice = async () => {
+    let lat = coordsRef.current?.latitude;
+    let lng = coordsRef.current?.longitude;
+    if (lat == null || lng == null) {
+      const last = await Location.getLastKnownPositionAsync().catch(() => null);
+      if (!last) {
+        Alert.alert("Location needed", "Allow location to report.");
+        return;
+      }
+      lat = last.coords.latitude;
+      lng = last.coords.longitude;
+    }
+    try {
+      const h = await reportHazard(lat, lng);
+      setHazards((prev) => {
+        const i = prev.findIndex((x) => x.id === h.id);
+        if (i >= 0) {
+          const next = [...prev];
+          next[i] = h;
+          return next;
+        }
+        return [...prev, h];
+      });
+      showToast({
+        message: "Police reported",
+        sub: `Visible within ${HAZARD_RADIUS_MILES} mi · 15 min`,
+        color: "#ff4500",
+      });
+    } catch (e: any) {
+      Alert.alert("Couldn't report", e.message);
+    }
+  };
+
+  const handleRemoveHazard = (h: Hazard) => {
+    Alert.alert("Remove report", "Take this police report down?", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Remove",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            await deleteHazard(h.id);
+            setHazards((prev) => prev.filter((x) => x.id !== h.id));
+          } catch {}
+        },
+      },
+    ]);
+  };
 
   const openInMaps = (w: Waypoint) => {
     Alert.alert(w.label, "Open directions in:", [
@@ -612,6 +729,25 @@ export default function MapScreen() {
             </MarkerView>
           );
         })}
+        {hazards.map((h) => {
+          const isMine = h.reporter_id === authUser?.id;
+          return (
+            <MarkerView
+              key={`hazard-${h.id}-${mapTheme}`}
+              id={`hazard-${h.id}`}
+              coordinate={[h.lng, h.lat]}
+              allowOverlap
+            >
+              <TouchableOpacity
+                onPress={() => (isMine ? handleRemoveHazard(h) : undefined)}
+                activeOpacity={isMine ? 0.7 : 1}
+                hitSlop={10}
+              >
+                <PoliceIcon width={34} height={34} />
+              </TouchableOpacity>
+            </MarkerView>
+          );
+        })}
         {allRiders.map((r) => (
           <RiderMarker
             key={`${r.user_id}-${mapTheme}`}
@@ -691,13 +827,29 @@ export default function MapScreen() {
         </View>
       </Animated.View>
 
-      {/* Push-to-talk voice button */}
+      {/* Top-left: PTT visibility toggle (mic) */}
       {isSharing && selfProfile && authUser && (
+        <TouchableOpacity
+          style={[styles.pttToggle, pttVisible && styles.pttToggleActive]}
+          onPress={() => setPttVisible((v) => !v)}
+          activeOpacity={0.8}
+        >
+          <Ionicons name={pttVisible ? "mic" : "mic-off"} size={17} color={pttVisible ? "#ff4500" : "#888"} />
+        </TouchableOpacity>
+      )}
+
+      {/* Push-to-talk voice button */}
+      {pttVisible && isSharing && selfProfile && authUser && (
         <VoicePTTButton
           userId={authUser.id}
           avatarUri={avatarUrl(selfProfile.avatar_seed, selfProfile.email)}
         />
       )}
+
+      {/* Police report (bottom-left, same style as right-side controls) */}
+      <TouchableOpacity style={styles.policeButton} onPress={handleReportPolice} activeOpacity={0.8}>
+        <PoliceIcon width={22} height={22} />
+      </TouchableOpacity>
 
       {/* Bottom-right controls */}
       <View style={styles.controls}>
@@ -712,9 +864,12 @@ export default function MapScreen() {
             setFollowMode(next);
             if (next && coordsRef.current && cameraRef.current) {
               lastMapInteractionRef.current = 0;
+              const hdg = coordsRef.current.heading;
               cameraRef.current.setCamera({
                 centerCoordinate: [coordsRef.current.longitude, coordsRef.current.latitude],
                 zoomLevel: 17,
+                pitch: 60,
+                heading: hdg != null && hdg >= 0 ? hdg : 0,
                 animationDuration: 700,
               });
             }
@@ -843,6 +998,33 @@ const styles = StyleSheet.create({
     borderColor: "#222",
     padding: 13,
     borderRadius: 14,
+  },
+  policeButton: {
+    position: "absolute",
+    bottom: 90,
+    left: 16,
+    backgroundColor: "rgba(10, 10, 10, 0.9)",
+    borderWidth: 1,
+    borderColor: "#222",
+    padding: 13,
+    borderRadius: 14,
+  },
+  pttToggle: {
+    position: "absolute",
+    top: 80,
+    left: 16,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: "rgba(8, 8, 8, 0.88)",
+    borderWidth: 1,
+    borderColor: "#1e1e1e",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  pttToggleActive: {
+    borderColor: "#ff450055",
+    backgroundColor: "rgba(255, 69, 0, 0.08)",
   },
   themeButton: {
     position: "absolute",

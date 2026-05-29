@@ -90,7 +90,7 @@ export default function RiderMarker({
   const isStale = lastSeen !== null;
   // Speed (m/s → mph). When fast, intermittently swap the info line with a
   // random vibe — sometimes the speed, sometimes a phrase, sometimes nothing.
-  const FAST_MPH = 75;
+  const FAST_MPH = 20;
   const speedMph =
     typeof rider.speed === "number" && rider.speed > 0 ? rider.speed * 2.23694 : null;
   const isFast = speedMph != null && speedMph >= FAST_MPH;

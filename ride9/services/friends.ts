@@ -80,6 +80,38 @@ export async function getPendingRequests(userId: string) {
   return data ?? [];
 }
 
+// Direct add-friend by user id (skips tag lookup) — for "add from ride room"
+export async function addFriendById(userId: string, targetId: string) {
+  if (targetId === userId) throw new Error("That's you!");
+
+  const { data: existing } = await supabase
+    .from("friends")
+    .select("id, user_id, status")
+    .or(
+      `and(user_id.eq.${userId},friend_id.eq.${targetId}),and(user_id.eq.${targetId},friend_id.eq.${userId})`
+    )
+    .maybeSingle();
+
+  if (existing?.status === "accepted") throw new Error("Already in your crew");
+  if (existing?.status === "pending" && existing.user_id === userId)
+    throw new Error("Request already sent");
+
+  // They already sent us a request → auto-accept
+  if (existing?.status === "pending" && existing.user_id === targetId) {
+    await acceptRequest(existing.id, targetId, userId);
+    return { autoAccepted: true };
+  }
+
+  const { error } = await supabase.from("friends").insert({
+    user_id: userId,
+    friend_id: targetId,
+    status: "pending",
+  });
+  if (error?.code === "23505") throw new Error("Already in your crew");
+  if (error) throw new Error(error.message);
+  return { autoAccepted: false };
+}
+
 export async function addFriend(userId: string, tag: string) {
   const cleanTag = tag.replace(/^@/, "").toLowerCase().trim();
 
