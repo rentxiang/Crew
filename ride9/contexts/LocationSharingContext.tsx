@@ -1,4 +1,4 @@
-import { createContext, useContext, useRef, useState, useEffect, ReactNode } from "react";
+import { createContext, useContext, useRef, useState, useEffect, useCallback, ReactNode } from "react";
 import { Alert, Linking, AppState } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Location from "expo-location";
@@ -208,6 +208,186 @@ export function LocationSharingProvider({ children }: { children: ReactNode }) {
       stopRef.current?.();
     };
   }, []);
+
+  // ── Incoming ride invites ────────────────────────────────────
+  // Sources of unacknowledged invites:
+  //   (a) realtime INSERT on room_members where user_id=me + invited_by set
+  //   (b) boot / foreground reconciliation — catches invites that arrived
+  //       while the app was killed or backgrounded (realtime doesn't replay)
+  // Both funnel into processInvite(). On Join we null out `invited_by` so the
+  // boot scan won't re-prompt next launch.
+  const currentRoomRef = useRef<Room | null>(currentRoom);
+  useEffect(() => { currentRoomRef.current = currentRoom; }, [currentRoom]);
+  const processedInvitesRef = useRef<Set<string>>(new Set());
+
+  const processInvite = useCallback(async (roomId: string, userId: string) => {
+    if (processedInvitesRef.current.has(roomId)) return;
+    processedInvitesRef.current.add(roomId);
+
+    // Single round-trip: rooms + host name via FK embed
+    const { data: room } = await supabase
+      .from("rooms")
+      .select("id, code, host_id, expires_at, host:users!rooms_host_id_fkey(name)")
+      .eq("id", roomId)
+      .single();
+    if (!room) {
+      await supabase
+        .from("room_members")
+        .delete()
+        .eq("room_id", roomId)
+        .eq("user_id", userId);
+      processedInvitesRef.current.delete(roomId);
+      return;
+    }
+    if (room.expires_at && new Date(room.expires_at).getTime() < Date.now()) {
+      await supabase
+        .from("room_members")
+        .delete()
+        .eq("room_id", room.id)
+        .eq("user_id", userId);
+      return;
+    }
+    const hostName = (room as any).host?.name ?? "A friend";
+    const targetRoom: Room = {
+      id: room.id,
+      code: room.code,
+      host_id: room.host_id,
+    };
+    const inAnotherRoom =
+      currentRoomRef.current && currentRoomRef.current.id !== targetRoom.id;
+
+    Alert.alert(
+      "Ride invite",
+      inAnotherRoom
+        ? `${hostName} invited you. Joining will leave your current ride.`
+        : `${hostName} invited you to a group ride.`,
+      [
+        {
+          text: "Decline",
+          style: "cancel",
+          onPress: async () => {
+            await supabase
+              .from("room_members")
+              .delete()
+              .eq("room_id", targetRoom.id)
+              .eq("user_id", userId);
+            // Release the dedupe slot so a *new* invite to the same room
+            // (host re-invites after a decline) can fire another alert.
+            processedInvitesRef.current.delete(targetRoom.id);
+          },
+        },
+        {
+          text: "Join",
+          onPress: async () => {
+            if (inAnotherRoom && currentRoomRef.current) {
+              await supabase
+                .from("room_members")
+                .delete()
+                .eq("room_id", currentRoomRef.current.id)
+                .eq("user_id", userId);
+            }
+            // Mark this invite as acknowledged so the boot scan skips it next launch
+            await supabase
+              .from("room_members")
+              .update({ invited_by: null })
+              .eq("room_id", targetRoom.id)
+              .eq("user_id", userId);
+            setCurrentRoom(targetRoom);
+            await startSharing(userId, { silent: true });
+            processedInvitesRef.current.delete(targetRoom.id);
+          },
+        },
+      ]
+    );
+  }, []);
+
+  const checkPendingInvites = useCallback(async (userId: string) => {
+    const { data } = await supabase
+      .from("room_members")
+      .select("room_id")
+      .eq("user_id", userId)
+      .not("invited_by", "is", null);
+    for (const row of data ?? []) {
+      await processInvite((row as any).room_id, userId);
+    }
+  }, [processInvite]);
+
+  useEffect(() => {
+    let channel: any = null;
+    let subscribedUserId: string | null = null;
+    let pollInterval: ReturnType<typeof setInterval> | null = null;
+
+    const setup = (userId: string) => {
+      // Idempotent: don't tear down a working channel when SIGNED_IN re-fires
+      // (Supabase emits both INITIAL_SESSION-like events and SIGNED_IN on boot).
+      // A teardown+resub creates a window where realtime events get lost.
+      if (subscribedUserId === userId && channel) {
+        checkPendingInvites(userId);
+        return;
+      }
+      if (channel) supabase.removeChannel(channel);
+      subscribedUserId = userId;
+      channel = supabase
+        .channel(`room-invites-${userId}`)
+        .on(
+          "postgres_changes",
+          {
+            event: "INSERT",
+            schema: "public",
+            table: "room_members",
+            filter: `user_id=eq.${userId}`,
+          },
+          async (payload) => {
+            const row = payload.new as any;
+            if (!row?.invited_by) return;
+            await processInvite(row.room_id, userId);
+          }
+        )
+        .subscribe((status) => {
+          if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+            console.warn("room-invites channel", status);
+          }
+        });
+      checkPendingInvites(userId);
+
+      // Backup: poll every 20s in case realtime drops an event silently
+      // (channel reconnect gaps, missed INSERTs, etc.). Cheap query.
+      if (pollInterval) clearInterval(pollInterval);
+      pollInterval = setInterval(() => {
+        checkPendingInvites(userId);
+      }, 20000);
+    };
+
+    supabase.auth.getUser().then(({ data }) => {
+      if (data?.user) setup(data.user.id);
+    });
+    const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === "SIGNED_IN" && session?.user) setup(session.user.id);
+      if (event === "SIGNED_OUT") {
+        if (channel) supabase.removeChannel(channel);
+        if (pollInterval) clearInterval(pollInterval);
+        channel = null;
+        pollInterval = null;
+        subscribedUserId = null;
+        processedInvitesRef.current.clear();
+      }
+    });
+
+    // Re-scan whenever the app returns to foreground — realtime doesn't replay
+    // events that fired while backgrounded.
+    const appStateSub = AppState.addEventListener("change", async (state) => {
+      if (state !== "active") return;
+      const { data } = await supabase.auth.getUser();
+      if (data?.user) await checkPendingInvites(data.user.id);
+    });
+
+    return () => {
+      if (channel) supabase.removeChannel(channel);
+      if (pollInterval) clearInterval(pollInterval);
+      sub.subscription.unsubscribe();
+      appStateSub.remove();
+    };
+  }, [processInvite, checkPendingInvites]);
 
   return (
     <LocationSharingContext.Provider

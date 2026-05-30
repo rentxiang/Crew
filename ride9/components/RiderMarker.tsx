@@ -20,6 +20,8 @@ interface Props {
   onPlayVoice?: () => void;
   onDeleteVoice?: () => void;
   onPress?: () => void;
+  onAddFriend?: () => void;
+  addRequested?: boolean;
 }
 
 export default function RiderMarker({
@@ -31,6 +33,8 @@ export default function RiderMarker({
   onPlayVoice,
   onDeleteVoice,
   onPress,
+  onAddFriend,
+  addRequested = false,
 }: Props) {
   const glowScale = useRef(new Animated.Value(1)).current;
   const glowOpacity = useRef(new Animated.Value(0.18)).current;
@@ -41,7 +45,10 @@ export default function RiderMarker({
   const [lastSeenMounted, setLastSeenMounted] = useState(false);
   const [bikeMounted, setBikeMounted] = useState(false);
 
-  const hasVoice = !!rider.voice;
+  const isLobby = !!rider.isLobby;
+  const hasVoice = !!rider.voice && !isLobby;
+  const showAdd = isLobby && !!onAddFriend;
+  const showBubble = hasVoice || showAdd;
 
   const animCoords = useRef(
     new Animated.ValueXY({ x: rider.longitude, y: rider.latitude })
@@ -64,9 +71,9 @@ export default function RiderMarker({
     }).start();
   }, [rider.latitude, rider.longitude]);
 
-  // Voice bubble grows/shrinks its layout height so the avatar slides smoothly
+  // Voice / tag bubble grows/shrinks its layout height so the avatar slides smoothly
   useEffect(() => {
-    if (selected && hasVoice) {
+    if (selected && showBubble) {
       setBubbleMounted(true);
       bubbleAnim.setValue(0);
       Animated.spring(bubbleAnim, {
@@ -84,7 +91,7 @@ export default function RiderMarker({
         if (finished) setBubbleMounted(false);
       });
     }
-  }, [selected, hasVoice]);
+  }, [selected, showBubble]);
 
   const lastSeen = getLastSeenText(rider.updated_at);
   const isStale = lastSeen !== null;
@@ -180,15 +187,19 @@ export default function RiderMarker({
     return () => pulse.stop();
   }, [isStale]);
 
-  // Self = theme orange; room members (incl. friends in room) = distinct amber; plain friends = blue
-  let accentHex = "#007aff";
-  let glowColor = "rgba(0, 122, 255,";
+  // Self = theme orange; room members (incl. friends in room) = distinct amber;
+  // plain friends = green; public-lobby strangers = blue.
+  let accentHex = "#22c55e";
+  let glowColor = "rgba(34, 197, 94,";
   if (rider.isSelf) {
     accentHex = "#ff4500";
     glowColor = "rgba(255, 69, 0,";
   } else if (rider.inRoom) {
     accentHex = "#ffa726";
     glowColor = "rgba(255, 167, 38,";
+  } else if (isLobby) {
+    accentHex = "#007aff";
+    glowColor = "rgba(0, 122, 255,";
   }
 
   return (
@@ -203,7 +214,7 @@ export default function RiderMarker({
         activeOpacity={onPress ? 0.75 : 1}
         style={styles.container}
       >
-        {hasVoice && bubbleMounted && (
+        {bubbleMounted && (
           <Animated.View
             style={{
               height: bubbleAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 46] }),
@@ -214,33 +225,53 @@ export default function RiderMarker({
             }}
           >
             <View style={styles.voiceExpandRow}>
-            <TouchableOpacity
-              style={[
-                styles.voiceBubble,
-                voiceRead && styles.voiceRead,
-                voicePlaying && styles.voiceBubbleActive,
-              ]}
-              onPress={onPlayVoice}
-              activeOpacity={0.7}
-            >
-              <Ionicons
-                name={voicePlaying ? "volume-high" : "play"}
-                size={14}
-                color="#fff"
-              />
-              <Text style={styles.voiceDur}>
-                {Math.max(1, Math.round(rider.voice.duration ?? 1))}&quot;
-              </Text>
-            </TouchableOpacity>
-            {onDeleteVoice && (
-              <TouchableOpacity
-                style={styles.voiceDeleteBubble}
-                onPress={onDeleteVoice}
-                activeOpacity={0.7}
-              >
-                <Ionicons name="trash" size={15} color="#ff5a52" />
-              </TouchableOpacity>
-            )}
+              {hasVoice ? (
+                <>
+                  <TouchableOpacity
+                    style={[
+                      styles.voiceBubble,
+                      voiceRead && styles.voiceRead,
+                      voicePlaying && styles.voiceBubbleActive,
+                    ]}
+                    onPress={onPlayVoice}
+                    activeOpacity={0.7}
+                  >
+                    <Ionicons
+                      name={voicePlaying ? "volume-high" : "play"}
+                      size={14}
+                      color="#fff"
+                    />
+                    <Text style={styles.voiceDur}>
+                      {Math.max(1, Math.round(rider.voice.duration ?? 1))}&quot;
+                    </Text>
+                  </TouchableOpacity>
+                  {onDeleteVoice && (
+                    <TouchableOpacity
+                      style={styles.voiceDeleteBubble}
+                      onPress={onDeleteVoice}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons name="trash" size={15} color="#ff5a52" />
+                    </TouchableOpacity>
+                  )}
+                </>
+              ) : showAdd ? (
+                <TouchableOpacity
+                  style={[styles.addBubble, addRequested && styles.addBubbleSent]}
+                  onPress={addRequested ? undefined : onAddFriend}
+                  activeOpacity={addRequested ? 1 : 0.7}
+                  disabled={addRequested}
+                >
+                  <Ionicons
+                    name={addRequested ? "checkmark" : "person-add"}
+                    size={13}
+                    color="#fff"
+                  />
+                  <Text style={styles.addBubbleText}>
+                    {addRequested ? "Sent" : "Add"}
+                  </Text>
+                </TouchableOpacity>
+              ) : null}
             </View>
           </Animated.View>
         )}
@@ -358,6 +389,26 @@ const styles = StyleSheet.create({
   voiceRead: {
     backgroundColor: "#3a3a3a",
   },
+  addBubble: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    backgroundColor: "#007aff",
+    paddingHorizontal: 13,
+    paddingVertical: 9,
+    borderRadius: 15,
+    borderWidth: 2,
+    borderColor: "#080808",
+  },
+  addBubbleSent: {
+    backgroundColor: "#3a3a3a",
+  },
+  addBubbleText: {
+    color: "#fff",
+    fontSize: 12,
+    fontWeight: "800",
+    letterSpacing: 0.4,
+  },
   voiceDur: {
     color: "#fff",
     fontSize: 12,
@@ -381,7 +432,7 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     borderWidth: 2,
     borderColor: "#ff4500",
-    backgroundColor: "#1a1a1a",
+    backgroundColor: "rgba(20, 20, 20, 0.72)",
   },
   avatarStale: {
     borderColor: "#444",

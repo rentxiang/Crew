@@ -56,10 +56,13 @@ export async function deleteRoom(roomId: string): Promise<void> {
 }
 
 export async function getRoomMembers(roomId: string): Promise<RoomMember[]> {
+  // Only accepted members (invited_by is null = self-join or already-accepted invite).
+  // Pending invites (invited_by set) don't count as in the room yet.
   const { data, error } = await supabase
     .from("room_members")
     .select("user_id")
-    .eq("room_id", roomId);
+    .eq("room_id", roomId)
+    .is("invited_by", null);
 
   if (error || !data) return [];
 
@@ -78,11 +81,44 @@ export async function getRoomMembers(roomId: string): Promise<RoomMember[]> {
   }));
 }
 
+// All user_ids tied to a room, accepted OR pending. Used by the host's invite
+// modal to hide friends who already have an outstanding invite.
+export async function getAllRoomMemberIds(roomId: string): Promise<string[]> {
+  const { data } = await supabase
+    .from("room_members")
+    .select("user_id")
+    .eq("room_id", roomId);
+  return (data ?? []).map((m: any) => m.user_id);
+}
+
+// Pending invitees (host-invited but not yet accepted) — for the host UI badge.
+export async function getPendingInvitees(roomId: string): Promise<RoomMember[]> {
+  const { data } = await supabase
+    .from("room_members")
+    .select("user_id")
+    .eq("room_id", roomId)
+    .not("invited_by", "is", null);
+  const ids = (data ?? []).map((m: any) => m.user_id);
+  if (ids.length === 0) return [];
+  const { data: users } = await supabase
+    .from("users")
+    .select("id, name, email, bike, avatar_seed")
+    .in("id", ids);
+  return (users ?? []).map((u: any) => ({
+    user_id: u.id,
+    name: u.name,
+    email: u.email,
+    bike: u.bike ?? null,
+    avatar_seed: u.avatar_seed ?? null,
+  }));
+}
+
 export async function getRoomMemberLocations(roomId: string) {
   const { data: members } = await supabase
     .from("room_members")
     .select("user_id")
-    .eq("room_id", roomId);
+    .eq("room_id", roomId)
+    .is("invited_by", null);
 
   const ids = members?.map((m) => m.user_id) ?? [];
   if (ids.length === 0) return [];
@@ -93,6 +129,15 @@ export async function getRoomMemberLocations(roomId: string) {
     .in("user_id", ids);
 
   return data ?? [];
+}
+
+// Host invites a friend directly — backend RPC checks host + friendship.
+export async function inviteFriend(roomId: string, friendId: string): Promise<void> {
+  const { error } = await supabase.rpc("host_invite_friend", {
+    p_room_id: roomId,
+    p_friend_id: friendId,
+  });
+  if (error) throw new Error(error.message);
 }
 
 export function subscribeRoomMembers(

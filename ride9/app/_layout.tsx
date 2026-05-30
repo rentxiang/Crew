@@ -8,6 +8,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { supabase } from "@/services/supabase";
 import { LocationSharingProvider } from "@/contexts/LocationSharingContext";
 import { ONBOARDING_KEY, OnboardingContext } from "@/contexts/onboarding";
+import { PendingCountProvider } from "@/contexts/PendingCount";
 import { registerForPushNotifications } from "@/services/notifications";
 
 function parseSupabaseUrl(url: string) {
@@ -91,6 +92,7 @@ export default function RootLayout() {
     <ThemeProvider value={DarkTheme}>
       <OnboardingContext.Provider value={{ markSeen: () => setOnboarded(true) }}>
       <LocationSharingProvider>
+      <PendingCountProvider>
         <Stack>
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
           <Stack.Screen name="login" options={{ headerShown: false }} />
@@ -98,6 +100,7 @@ export default function RootLayout() {
           <Stack.Screen name="auth/callback" options={{ headerShown: false }} />
         </Stack>
         <StatusBar style="light" />
+      </PendingCountProvider>
       </LocationSharingProvider>
       </OnboardingContext.Provider>
     </ThemeProvider>

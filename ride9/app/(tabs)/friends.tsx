@@ -23,6 +23,7 @@ import {
 } from "../../services/friends";
 import { getProfile, avatarUrl } from "../../services/profile";
 import { useLocationSharing } from "../../contexts/LocationSharingContext";
+import { usePendingCount } from "../../contexts/PendingCount";
 
 type Friend = {
   friend_id: string;
@@ -96,6 +97,7 @@ function Avatar({
 export default function Friends() {
   const router = useRouter();
   const { setFocusCoords } = useLocationSharing();
+  const { decrement: decrementPending, refresh: refreshPending } = usePendingCount();
 
   const [user, setUser] = useState<any>(null);
   const [selfUsername, setSelfUsername] = useState<string | null>(null);
@@ -111,12 +113,12 @@ export default function Friends() {
       const { data, error } = await supabase.auth.getUser();
       if (error || !data?.user) return;
       setUser(data.user);
-      await Promise.all([
+      const [, , , profile] = await Promise.all([
         fetchFriends(data.user.id),
         fetchRequests(data.user.id),
         fetchSent(data.user.id),
+        getProfile(data.user.id),
       ]);
-      const profile = await getProfile(data.user.id);
       setSelfUsername(profile?.username ?? null);
       setLoading(false);
     };
@@ -242,6 +244,7 @@ export default function Friends() {
       fetchFriends(user.id);
       fetchRequests(user.id);
       fetchSent(user.id);
+      refreshPending();
     }, [user])
   );
 
@@ -288,6 +291,7 @@ export default function Friends() {
   const handleAccept = async (req: PendingRequest) => {
     try {
       await acceptRequest(req.id, req.user_id, user.id);
+      decrementPending();
       fetchFriends(user.id);
       fetchRequests(user.id);
     } catch {
@@ -298,6 +302,7 @@ export default function Friends() {
   const handleReject = async (req: PendingRequest) => {
     try {
       await rejectRequest(req.id);
+      decrementPending();
       fetchRequests(user.id);
     } catch {
       Alert.alert("Error", "Failed to decline request");
@@ -452,6 +457,8 @@ export default function Friends() {
           const live = isLive(locations[item.friend_id]);
           const hasLocation = !!locations[item.friend_id]?.lat;
           const seen = lastSeenText(locations[item.friend_id]);
+          const isFresh = live && seen === "Live now";
+          const isStaleSharing = live && !isFresh;
           return (
             <View style={styles.friendItem}>
               <TouchableOpacity
@@ -465,7 +472,11 @@ export default function Friends() {
                     fallback={item.friend.username ?? item.friend.name}
                   />
                   <View
-                    style={[styles.liveDot, live && styles.liveDotActive]}
+                    style={[
+                      styles.liveDot,
+                      isFresh && styles.liveDotActive,
+                      isStaleSharing && styles.liveDotStale,
+                    ]}
                   />
                 </View>
                 <View>
@@ -625,12 +636,19 @@ const styles = StyleSheet.create({
     width: 10,
     height: 10,
     borderRadius: 5,
-    backgroundColor: "#222",
-    borderWidth: 2,
-    borderColor: "#080808",
+    backgroundColor: "transparent",
+    borderWidth: 1.5,
+    borderColor: "#555",
   },
   liveDotActive: {
     backgroundColor: "#ff4500",
+    borderWidth: 2,
+    borderColor: "#080808",
+  },
+  liveDotStale: {
+    backgroundColor: "transparent",
+    borderWidth: 1.5,
+    borderColor: "#ff4500",
   },
   name: {
     fontSize: 15,

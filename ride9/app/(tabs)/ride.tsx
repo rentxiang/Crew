@@ -9,6 +9,8 @@ import {
   TextInput,
   Share,
   Linking,
+  Modal,
+  Image,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
@@ -20,11 +22,14 @@ import {
   leaveRoom,
   deleteRoom,
   getRoomMembers,
+  getPendingInvitees,
   subscribeRoomMembers,
+  inviteFriend,
   RoomMember,
 } from "../../services/rooms";
 import { getRoute, subscribeRoute, RoomRoute } from "../../services/routes";
-import { addFriendById } from "../../services/friends";
+import { addFriendById, getFriends } from "../../services/friends";
+import { avatarUrl } from "../../services/profile";
 import RouteEditor from "../../components/RouteEditor";
 
 export default function RideScreen() {
@@ -34,6 +39,7 @@ export default function RideScreen() {
 
   const [authUser, setAuthUser] = useState<any>(null);
   const [members, setMembers] = useState<RoomMember[]>([]);
+  const [pendingInvitees, setPendingInvitees] = useState<RoomMember[]>([]);
   const [isJoining, setIsJoining] = useState(false);
   const [joinCode, setJoinCode] = useState("");
   const [loading, setLoading] = useState(false);
@@ -41,6 +47,9 @@ export default function RideScreen() {
   const [editorVisible, setEditorVisible] = useState(false);
   const [friendSet, setFriendSet] = useState<Set<string>>(new Set()); // accepted friends
   const [pendingSet, setPendingSet] = useState<Set<string>>(new Set()); // outgoing requests
+  const [inviteModalVisible, setInviteModalVisible] = useState(false);
+  const [inviteList, setInviteList] = useState<any[]>([]);
+  const [invitingId, setInvitingId] = useState<string | null>(null);
 
   const realtimeSubRef = useRef<any>(null);
   const routeSubRef = useRef<any>(null);
@@ -119,6 +128,29 @@ export default function RideScreen() {
     }
   };
 
+  const openInviteModal = async () => {
+    if (!authUser || !currentRoom) return;
+    setInviteModalVisible(true);
+    const fr = await getFriends(authUser.id);
+    setInviteList(fr);
+    // members + pendingInvitees are already kept fresh by loadMembers + realtime
+  };
+
+  const handleInvite = async (friendId: string) => {
+    if (!currentRoom) return;
+    setInvitingId(friendId);
+    try {
+      await inviteFriend(currentRoom.id, friendId);
+      // The realtime sub on room_members fires loadMembers, which refetches
+      // pendingInvitees — so the button flips to "Pending" automatically.
+      // Optimistically refresh too so it feels instant.
+      loadMembers();
+    } catch (e: any) {
+      Alert.alert("Couldn't invite", e.message);
+    }
+    setInvitingId(null);
+  };
+
   // Load members + route whenever room changes
   useEffect(() => {
     if (!currentRoom) {
@@ -147,10 +179,14 @@ export default function RideScreen() {
 
   const loadMembers = async () => {
     if (!currentRoom) return;
-    const data = await getRoomMembers(currentRoom.id);
-    // Empty = the room was closed by the host (members cascade-removed)
-    if (data.length === 0) {
+    const [data, pending] = await Promise.all([
+      getRoomMembers(currentRoom.id),
+      getPendingInvitees(currentRoom.id),
+    ]);
+    // Empty (both accepted + pending) = the room was closed by the host
+    if (data.length === 0 && pending.length === 0) {
       setMembers([]);
+      setPendingInvitees([]);
       if (currentRoom.host_id !== authUser?.id) {
         Alert.alert("Ride ended", "The host ended this group ride.");
       }
@@ -158,6 +194,7 @@ export default function RideScreen() {
       return;
     }
     setMembers(data);
+    setPendingInvitees(pending);
   };
 
   const loadRoute = async () => {
@@ -424,7 +461,18 @@ export default function RideScreen() {
       )}
 
       {/* Members list */}
-      <Text style={styles.sectionLabel}>RIDERS · {members.length}</Text>
+      <View style={styles.ridersHeader}>
+        <Text style={styles.sectionLabel}>RIDERS · {members.length}</Text>
+        {isHost && (
+          <TouchableOpacity
+            onPress={openInviteModal}
+            activeOpacity={0.6}
+            hitSlop={10}
+          >
+            <Ionicons name="add" size={22} color="#ff4500" />
+          </TouchableOpacity>
+        )}
+      </View>
 
       <FlatList
         data={members}
@@ -483,6 +531,91 @@ export default function RideScreen() {
           {isHost ? "End Group Ride" : "Leave Ride"}
         </Text>
       </TouchableOpacity>
+
+      {/* Host invite modal */}
+      <Modal
+        visible={inviteModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setInviteModalVisible(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>INVITE CREW</Text>
+              <TouchableOpacity
+                onPress={() => setInviteModalVisible(false)}
+                hitSlop={10}
+              >
+                <Ionicons name="close" size={22} color="#666" />
+              </TouchableOpacity>
+            </View>
+            {(() => {
+              const acceptedIds = new Set(members.map((m) => m.user_id));
+              const pendingIds = new Set(pendingInvitees.map((p) => p.user_id));
+              const invitable = inviteList.filter(
+                (f) => !acceptedIds.has(f.friend_id)
+              );
+              return (
+                <FlatList
+                  data={invitable}
+                  keyExtractor={(item) => item.friend_id}
+                  ListEmptyComponent={
+                    <Text style={styles.modalEmpty}>
+                      No friends to invite — add some in CREW first.
+                    </Text>
+                  }
+                  renderItem={({ item }) => {
+                    const busy = invitingId === item.friend_id;
+                    const isPending = pendingIds.has(item.friend_id);
+                    return (
+                      <View style={styles.inviteRow}>
+                        <Image
+                          source={{
+                            uri: avatarUrl(
+                              item.friend.avatar_seed,
+                              item.friend.username ?? item.friend.name
+                            ),
+                          }}
+                          style={styles.inviteAvatar}
+                        />
+                        <View style={styles.inviteInfo}>
+                          <Text style={styles.inviteName}>
+                            {item.friend.name}
+                          </Text>
+                          {item.friend.username ? (
+                            <Text style={styles.inviteHandle}>
+                              @{item.friend.username}
+                            </Text>
+                          ) : null}
+                        </View>
+                        <TouchableOpacity
+                          style={[
+                            styles.inviteAction,
+                            (busy || isPending) && styles.inviteActionPending,
+                          ]}
+                          onPress={() => handleInvite(item.friend_id)}
+                          disabled={busy || isPending}
+                          activeOpacity={0.7}
+                        >
+                          <Text
+                            style={[
+                              styles.inviteActionText,
+                              isPending && styles.inviteActionTextPending,
+                            ]}
+                          >
+                            {busy ? "..." : isPending ? "Pending" : "Invite"}
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    );
+                  }}
+                />
+              );
+            })()}
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -706,6 +839,11 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: "700",
     letterSpacing: 3,
+  },
+  ridersHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
     marginBottom: 12,
   },
   memberList: {
@@ -774,5 +912,93 @@ const styles = StyleSheet.create({
     color: "#555",
     fontSize: 14,
     fontWeight: "600",
+  },
+
+  // Invite modal
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.7)",
+    justifyContent: "flex-end",
+  },
+  modalCard: {
+    backgroundColor: "#0f0f0f",
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingHorizontal: 20,
+    paddingTop: 18,
+    paddingBottom: 32,
+    maxHeight: "75%",
+    borderTopWidth: 1,
+    borderColor: "#191919",
+  },
+  modalHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingBottom: 14,
+    marginBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: "#1a1a1a",
+  },
+  modalTitle: {
+    color: "#fff",
+    fontSize: 12,
+    fontWeight: "900",
+    letterSpacing: 3,
+  },
+  modalEmpty: {
+    color: "#444",
+    fontSize: 13,
+    textAlign: "center",
+    paddingVertical: 32,
+  },
+  inviteRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#141414",
+  },
+  inviteAvatar: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: "#1a1a1a",
+  },
+  inviteInfo: {
+    flex: 1,
+  },
+  inviteName: {
+    color: "#fff",
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  inviteHandle: {
+    color: "#444",
+    fontSize: 11,
+    marginTop: 2,
+  },
+  inviteAction: {
+    backgroundColor: "#ff4500",
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 8,
+    minWidth: 72,
+    alignItems: "center",
+  },
+  inviteActionPending: {
+    backgroundColor: "transparent",
+    borderWidth: 1,
+    borderColor: "#333",
+  },
+  inviteActionText: {
+    color: "#fff",
+    fontSize: 12,
+    fontWeight: "800",
+    letterSpacing: 0.5,
+  },
+  inviteActionTextPending: {
+    color: "#666",
   },
 });

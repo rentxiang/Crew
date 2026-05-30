@@ -12,40 +12,80 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { ONBOARDING_KEY, useOnboarding } from "../contexts/onboarding";
+import PoliceIcon from "../assets/images/police.svg";
 
 const { width } = Dimensions.get("window");
 
-type Slide = {
-  icon: keyof typeof Ionicons.glyphMap;
-  title: string;
-  body: string;
+type Feature = {
+  ionicon?: keyof typeof Ionicons.glyphMap;
+  svg?: "police";
+  label: string;
+  desc: string;
 };
+
+type Slide =
+  | {
+      kind: "intro";
+      icon: keyof typeof Ionicons.glyphMap;
+      title: string;
+      body: string;
+    }
+  | {
+      kind: "features";
+      title: string;
+      features: Feature[];
+    };
 
 const SLIDES: Slide[] = [
   {
+    kind: "intro",
     icon: "speedometer-outline",
     title: "WELCOME TO CREW",
-    body: "Ride together, stay together. Live tracking for you and your crew.",
+    body: "Live group-ride tracking, built for motorcycle crews.",
   },
   {
-    icon: "map-outline",
-    title: "EVERYONE ON ONE MAP",
-    body: "Turn on location sharing to watch your crew move in real time. You stay visible at your last location until you turn sharing off.",
-  },
-  {
+    kind: "intro",
     icon: "people-outline",
     title: "BUILD YOUR CREW",
-    body: "Add riders by their @tag. Once they accept, you'll see each other live.",
+    body: "Add riders by their @tag. Once they accept, you'll see each other live on the map.",
   },
   {
-    icon: "mic-outline",
-    title: "HOLD TO TALK",
-    body: "Press your avatar to drop a voice message on the map. Tap to listen — gone in 24h.",
+    kind: "intro",
+    icon: "radio-button-on",
+    title: "RIDE TOGETHER",
+    body: "Start a ride to get a 6-digit code. Share it, or pull friends in directly. Plan a shared route the whole group can follow.",
   },
   {
-    icon: "navigate-outline",
-    title: "START A RIDE",
-    body: "Create or join a ride with a code, and plan a route for the whole group.",
+    kind: "features",
+    title: "KNOW YOUR MAP",
+    features: [
+      {
+        ionicon: "location",
+        label: "Share location",
+        desc: "Stays on until you turn it off — even when the app is closed.",
+      },
+      {
+        ionicon: "lock-closed",
+        label: "Lock view",
+        desc: "Map auto-follows you and rotates with your heading while riding.",
+      },
+      {
+        ionicon: "globe",
+        label: "Public lobby",
+        desc: "Opt in to let riders within 100 mi see you. Off by default.",
+      },
+      {
+        svg: "police",
+        label: "Report police",
+        desc: "One-tap heads-up — visible to riders nearby for 15 min.",
+      },
+    ],
+  },
+  {
+    kind: "intro",
+    icon: "rocket-outline",
+    title: "READY TO RIDE",
+    body: "Sign in to get started. Stay visible to your crew. Stay safe.",
   },
 ];
 
@@ -57,7 +97,7 @@ export default function Onboarding() {
 
   const finish = async () => {
     await AsyncStorage.setItem(ONBOARDING_KEY, "1");
-    markSeen(); // updates root state, which routes to login/tabs
+    markSeen();
   };
 
   const next = () => {
@@ -88,11 +128,36 @@ export default function Onboarding() {
       >
         {SLIDES.map((s, i) => (
           <View key={i} style={[styles.slide, { width }]}>
-            <View style={styles.iconWrap}>
-              <Ionicons name={s.icon} size={72} color="#ff4500" />
-            </View>
-            <Text style={styles.title}>{s.title}</Text>
-            <Text style={styles.body}>{s.body}</Text>
+            {s.kind === "intro" ? (
+              <>
+                <View style={styles.iconWrap}>
+                  <Ionicons name={s.icon} size={72} color="#ff4500" />
+                </View>
+                <Text style={styles.title}>{s.title}</Text>
+                <Text style={styles.body}>{s.body}</Text>
+              </>
+            ) : (
+              <>
+                <Text style={[styles.title, styles.featuresTitle]}>{s.title}</Text>
+                <View style={styles.featureList}>
+                  {s.features.map((f, j) => (
+                    <View key={j} style={styles.featureRow}>
+                      <View style={styles.featureIconWrap}>
+                        {f.svg === "police" ? (
+                          <PoliceIcon width={26} height={26} />
+                        ) : f.ionicon ? (
+                          <Ionicons name={f.ionicon} size={22} color="#ff4500" />
+                        ) : null}
+                      </View>
+                      <View style={styles.featureText}>
+                        <Text style={styles.featureLabel}>{f.label}</Text>
+                        <Text style={styles.featureDesc}>{f.desc}</Text>
+                      </View>
+                    </View>
+                  ))}
+                </View>
+              </>
+            )}
           </View>
         ))}
       </ScrollView>
@@ -156,6 +221,43 @@ const styles = StyleSheet.create({
     fontSize: 15,
     textAlign: "center",
     lineHeight: 23,
+  },
+  featuresTitle: {
+    marginBottom: 36,
+  },
+  featureList: {
+    width: "100%",
+    gap: 18,
+  },
+  featureRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 16,
+  },
+  featureIconWrap: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: "#140d0a",
+    borderWidth: 1,
+    borderColor: "#2a1a12",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  featureText: {
+    flex: 1,
+  },
+  featureLabel: {
+    color: "#fff",
+    fontSize: 14,
+    fontWeight: "800",
+    letterSpacing: 1.5,
+    marginBottom: 3,
+  },
+  featureDesc: {
+    color: "#888",
+    fontSize: 12,
+    lineHeight: 17,
   },
   dots: {
     flexDirection: "row",

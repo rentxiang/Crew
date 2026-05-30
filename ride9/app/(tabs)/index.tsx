@@ -8,7 +8,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { supabase } from "@/services/supabase";
 import RiderMarker from "../../components/RiderMarker";
 import { getFriendLocations } from "../../services/location";
-import { getFriends } from "../../services/friends";
+import { getFriends, addFriendById, getSentRequests } from "../../services/friends";
 import { getRoomMemberLocations, getRoomMembers } from "../../services/rooms";
 import { useLocationSharing } from "../../contexts/LocationSharingContext";
 import { avatarUrl, getProfile } from "../../services/profile";
@@ -23,6 +23,13 @@ import {
   HAZARD_RADIUS_MILES,
   Hazard,
 } from "../../services/hazards";
+import {
+  fetchNearbyPublicRiders,
+  getPublicVisibility,
+  setPublicVisibility,
+  PUBLIC_LOBBY_RADIUS_MILES,
+  PublicRider,
+} from "../../services/publicLobby";
 import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
 import PoliceIcon from "../../assets/images/police.svg";
 import { createAudioPlayer, setAudioModeAsync } from "expo-audio";
@@ -59,6 +66,9 @@ export default function MapScreen() {
   const [mapTheme, setMapTheme] = useState<"dark" | "day">("dark");
   const [hazards, setHazards] = useState<Hazard[]>([]);
   const [pttVisible, setPttVisible] = useState(false);
+  const [publicVisible, setPublicVisible] = useState(false);
+  const [publicRiders, setPublicRiders] = useState<PublicRider[]>([]);
+  const [requestedLobbyIds, setRequestedLobbyIds] = useState<Set<string>>(new Set());
   const voicePlayerRef = useRef<any>(null);
   const headingRef = useRef<number | null>(null); // device compass heading
   const cameraRef = useRef<Camera>(null);
@@ -144,12 +154,17 @@ export default function MapScreen() {
     }
   }, [isSharing]);
 
-  // Refresh profiles + route every time the map tab comes into focus
+  // Refresh profiles + route + pending sent friend requests every time the map tab comes into focus.
+  // The sent-requests refresh resets the lobby "Sent" button if the stranger rejected our request
+  // (rejection deletes the row, so they fall out of the pending set → button re-enables).
   useFocusEffect(
     useCallback(() => {
       if (!authUser) return;
       getProfile(authUser.id).then((p) => { if (p) setSelfProfile(p); });
       loadFriends(authUser.id);
+      getSentRequests(authUser.id).then((sent) => {
+        setRequestedLobbyIds(new Set(sent.map((s: any) => s.friend_id)));
+      });
       if (currentRoom) getRoute(currentRoom.id).then(setRoomRoute).catch(() => {});
     }, [authUser, currentRoom?.id])
   );
@@ -463,6 +478,116 @@ export default function MapScreen() {
     return () => clearInterval(interval);
   }, []);
 
+  // ── Public lobby ──────────────────────────────────────────
+  useEffect(() => {
+    if (!authUser) return;
+    getPublicVisibility(authUser.id).then(setPublicVisible);
+  }, [authUser]);
+
+  // Lobby requires active sharing — whenever sharing is off, force lobby off (UI + DB).
+  // Also fires on boot if sharing hasn't started yet, giving a clean "opt-in per session" UX.
+  useEffect(() => {
+    if (isSharing) return;
+    if (!publicVisible) return;
+    if (!authUser) return;
+    setPublicVisible(false);
+    setPublicVisibility(authUser.id, false).catch(() => {});
+  }, [isSharing, publicVisible, authUser]);
+
+  // Poll nearby public riders while lobby + sharing are both on
+  useEffect(() => {
+    if (!publicVisible || !isSharing) {
+      setPublicRiders([]);
+      return;
+    }
+    let cancelled = false;
+    const fetchOnce = async () => {
+      const c = coordsRef.current;
+      if (!c) return;
+      const data = await fetchNearbyPublicRiders(c.latitude, c.longitude);
+      if (!cancelled) setPublicRiders(data);
+    };
+    fetchOnce();
+    const interval = setInterval(fetchOnce, 8000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [publicVisible, isSharing]);
+
+  const applyLobbyToggle = async (next: boolean) => {
+    if (!authUser) return;
+    setPublicVisible(next);
+    try {
+      await setPublicVisibility(authUser.id, next);
+      showToast({
+        message: next ? "Public lobby on" : "Public lobby off",
+        sub: next
+          ? `Riders within ${PUBLIC_LOBBY_RADIUS_MILES} mi can see you`
+          : "Back to crew-only",
+        color: next ? "#007aff" : "#555",
+      });
+    } catch (e: any) {
+      setPublicVisible(!next);
+      Alert.alert("Couldn't update", e.message);
+    }
+  };
+
+  const handleTogglePublicLobby = async () => {
+    if (!authUser) return;
+    if (!publicVisible && !isSharing) {
+      Alert.alert(
+        "Enable sharing first",
+        "Start sharing your location to join the public lobby."
+      );
+      return;
+    }
+    const next = !publicVisible;
+    if (next) {
+      const shown = await AsyncStorage.getItem("@crew/public_lobby_intro_shown");
+      if (!shown) {
+        Alert.alert(
+          "Public lobby",
+          `Your live location and bike info will be visible to any rider within ${PUBLIC_LOBBY_RADIUS_MILES} miles who has also enabled public lobby. They can tap your marker to send you a friend request.\n\nYou can turn this off any time.`,
+          [
+            { text: "Cancel", style: "cancel" },
+            {
+              text: "Enable",
+              onPress: async () => {
+                await AsyncStorage.setItem("@crew/public_lobby_intro_shown", "1");
+                applyLobbyToggle(true);
+              },
+            },
+          ]
+        );
+        return;
+      }
+    }
+    applyLobbyToggle(next);
+  };
+
+  const handleAddLobbyRider = async (riderId: string) => {
+    if (!authUser) return;
+    try {
+      const result = await addFriendById(authUser.id, riderId);
+      setRequestedLobbyIds((prev) => {
+        const next = new Set(prev);
+        next.add(riderId);
+        return next;
+      });
+      showToast({
+        message: result.autoAccepted ? "Crew up!" : "Request sent",
+        sub: result.autoAccepted
+          ? "They're now in your crew"
+          : "Waiting for them to accept",
+        color: "#007aff",
+      });
+      if (result.autoAccepted) loadFriends(authUser.id);
+    } catch (e: any) {
+      Alert.alert("Couldn't add", e.message);
+    }
+  };
+
   const handleReportPolice = async () => {
     let lat = coordsRef.current?.latitude;
     let lng = coordsRef.current?.longitude;
@@ -644,6 +769,7 @@ export default function MapScreen() {
   // Merge friends + room members, deduplicated, exclude self
   const selfId = authUser?.id;
 
+  const friendIdSet = new Set(friends.map((f) => f.user_id));
   const roomMemberIds = new Set(
     currentRoom ? roomMembers.map((m: any) => m.user_id) : []
   );
@@ -672,7 +798,31 @@ export default function MapScreen() {
     };
   }).filter((r) => r.is_sharing && r.latitude && r.longitude);
 
-  const activeCount = allRiders.length;
+  // Lobby strangers: public riders not already friends/room/self
+  const lobbyRiders = publicRiders
+    .filter(
+      (p) =>
+        p.user_id !== selfId &&
+        !friendIdSet.has(p.user_id) &&
+        !roomMemberIds.has(p.user_id)
+    )
+    .map((p) => ({
+      user_id: p.user_id,
+      name: p.name,
+      bike: p.bike,
+      username: p.username,
+      avatarUrl: avatarUrl(p.avatar_seed, p.email),
+      latitude: p.lat,
+      longitude: p.lng,
+      is_sharing: true,
+      updated_at: p.updated_at,
+      speed: p.speed,
+      heading: p.heading,
+      voice: null,
+      isLobby: true,
+    }));
+
+  const activeCount = allRiders.length + lobbyRiders.length;
 
   const centerOnUser = async () => {
     if (!cameraRef.current) return;
@@ -820,6 +970,27 @@ export default function MapScreen() {
             }}
           />
         ))}
+        {lobbyRiders.map((r) => (
+          <RiderMarker
+            key={`lobby-${r.user_id}-${mapTheme}`}
+            rider={r}
+            showLabel={zoomLevel >= 13}
+            selected={selectedRiderId === r.user_id}
+            onAddFriend={() => handleAddLobbyRider(r.user_id)}
+            addRequested={requestedLobbyIds.has(r.user_id)}
+            onPress={() => {
+              if (selectedTimerRef.current) clearTimeout(selectedTimerRef.current);
+              setSelectedRiderId(r.user_id);
+              setFollowMode(false);
+              cameraRef.current?.setCamera({
+                centerCoordinate: [r.longitude, r.latitude],
+                zoomLevel: 13,
+                animationDuration: 600,
+              });
+              selectedTimerRef.current = setTimeout(() => setSelectedRiderId(null), 6000);
+            }}
+          />
+        ))}
         {isSharing && selfCoords && selfProfile && (
           <RiderMarker
             key={`self-${mapTheme}`}
@@ -889,6 +1060,19 @@ export default function MapScreen() {
           <Ionicons name={pttVisible ? "mic" : "mic-off"} size={17} color={pttVisible ? "#ff4500" : "#888"} />
         </TouchableOpacity>
       )}
+
+      {/* Top-left (next to PTT): public lobby toggle */}
+      <TouchableOpacity
+        style={[styles.lobbyToggle, publicVisible && styles.lobbyToggleActive]}
+        onPress={handleTogglePublicLobby}
+        activeOpacity={0.8}
+      >
+        <Ionicons
+          name={publicVisible ? "globe" : "globe-outline"}
+          size={17}
+          color={publicVisible ? "#007aff" : "#888"}
+        />
+      </TouchableOpacity>
 
       {/* Push-to-talk voice button */}
       {pttVisible && isSharing && selfProfile && authUser && (
@@ -1065,7 +1249,7 @@ const styles = StyleSheet.create({
   pttToggle: {
     position: "absolute",
     top: 80,
-    left: 16,
+    left: 58,
     width: 34,
     height: 34,
     borderRadius: 17,
@@ -1078,6 +1262,23 @@ const styles = StyleSheet.create({
   pttToggleActive: {
     borderColor: "#ff450055",
     backgroundColor: "rgba(255, 69, 0, 0.08)",
+  },
+  lobbyToggle: {
+    position: "absolute",
+    top: 80,
+    left: 16,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: "rgba(8, 8, 8, 0.88)",
+    borderWidth: 1,
+    borderColor: "#1e1e1e",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  lobbyToggleActive: {
+    borderColor: "#007aff55",
+    backgroundColor: "rgba(0, 122, 255, 0.08)",
   },
   themeButton: {
     position: "absolute",

@@ -19,7 +19,7 @@ import { getNotificationsEnabled, setNotificationsEnabled } from "../../services
 import { useLocationSharing } from "../../contexts/LocationSharingContext";
 
 // TODO: replace with your hosted PRIVACY.md URL (e.g. GitHub Pages / Notion public page)
-const PRIVACY_URL = "https://tianxiangren.github.io/crew-privacy/";
+const PRIVACY_URL = "https://tianxiangren.vercel.app/crew-privacy/";
 
 const AVATAR_SEEDS = [
   "canyon", "nightrider", "apex", "throttle",
@@ -51,8 +51,8 @@ export default function ProfileScreen() {
         setBike(p.bike ?? "");
         setSelectedSeed(p.avatar_seed);
       }
-      setNotifEnabled(await getNotificationsEnabled(data.user.id));
       setLoading(false);
+      getNotificationsEnabled(data.user.id).then(setNotifEnabled);
     };
     load();
   }, []);
